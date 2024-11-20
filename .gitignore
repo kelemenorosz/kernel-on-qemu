@@ -1,0 +1,9 @@
+build/
+*.asm.bin
+bootloader_large
+run.sh
+kernel.dump
+/kernel
+kernel_extract.bin
+qemu_ethernet_dump.dat
+*.sublime*
