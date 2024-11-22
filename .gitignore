@@ -1,6 +1,7 @@
 build/
 *.asm.bin
 bootloader_large
+/bootloader
 run.sh
 kernel.dump
 /kernel
