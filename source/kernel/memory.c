@@ -55,7 +55,7 @@ typedef struct __attribute__((__packed__)) BUDDY_NODE {
 #define BUDDY_NODE_SIDEDNESS_RIGHT		0x1
 #define BUDDY_NODE_SIDEDNESS_NONE		0x2
 
-typedef struct __attribute__((__packed__)) BUDDY_LISTS {
+typedef struct __attribute__((__packed__, __aligned__(4))) BUDDY_LISTS {
 
 	BUDDY_NODE* node4k_first;
 	BUDDY_NODE* node8k_first;
@@ -104,26 +104,11 @@ void memcpy(void* destination, const void* source, size_t num) {
 
 }
 
-/*
-Function:		alloc_page
-Description: 	Allocates 'count' contiguous pages.
-				Doesn't check for heap space.
-Return:			Pointer to first page start.
-*/
-void* alloc_page(size_t count) {
-
-	void* ptr = (void*)(g_heapStart + g_pageCount * G_HEAP_PAGE_SIZE);
-	g_pageCount += count;
-
-	return ptr;
-
-}
-
 /* 
 Function: 		memory_init
 Description: 	Initialize heap from memory map information.
-				Doesn't check for existence of memory map. 
-				Sets heap pointer to largest type 1 memory start.
+				Allocate memory space for buddy allocator header.
+				Initializes the buddy allocator highest order block nodes. At the moment it is set to 128K.
 Return:			NONE
 */
 void memory_init() {
@@ -144,46 +129,16 @@ void memory_init() {
 		memmap_ptr += sizeof(ADDRESS_RANGE_DESCRIPTOR);
 	}
 
-	// print_string("Heap size with no max block alignment: ");
-	// print_dword(maxLen);
-	// print_newline();
-
-	uint32_t max_block_count = maxLen / G_HEAP_MAX_BLOCK_SIZE;
-
-	// print_string("Number of 0x20000 / 128K size blocks: ");
-	// print_dword(max_block_count);
-	// print_newline();
-
-	uint32_t heapLen = max_block_count * G_HEAP_MAX_BLOCK_SIZE;
-
-	// print_string("Heap size: ");
-	// print_dword(heapLen);
-	// print_newline();
-
 	// -- Calculate how many max blocks are there
 	uint32_t max_block_count_re = maxLen / (sizeof(BUDDY_NODE) * 0x3F + G_HEAP_MAX_BLOCK_SIZE); // 0x3F is the number of nodes per max blocks when G_HEAP_MAX_BLOCK_SIZE is 128K
 
-	// print_string("max_block_count_re: ");
-	// print_dword(max_block_count_re);
-	// print_newline();
-
-
-
 	uint32_t buddy_header_size = sizeof(BUDDY_NODE) * 0x3F * max_block_count_re; 
 	uint32_t buddy_header_mod = buddy_header_size % G_HEAP_MAX_BLOCK_SIZE;
-	// print_string("buddy_header_size: ");
-	// print_dword(buddy_header_size);
-	// print_newline();
+
 	if (buddy_header_mod != 0) {
 		buddy_header_size = buddy_header_size / G_HEAP_MAX_BLOCK_SIZE;
-	// print_string("buddy_header_size: ");
-	// print_dword(buddy_header_size);
-	// print_newline();
 		buddy_header_size++;
 		buddy_header_size *= G_HEAP_MAX_BLOCK_SIZE;
-	// print_string("buddy_header_size: ");
-	// print_dword(buddy_header_size);
-	// print_newline();
 	} 
 	else {
 		buddy_header_size /= G_HEAP_MAX_BLOCK_SIZE;
@@ -206,9 +161,7 @@ void memory_init() {
 	g_buddy_lists.node64k_first = NULL;
 	g_buddy_lists.node128k_first = NULL;
 
-	// print_string("&g_buddy_lists.node4k_first");
-	// print_dword((uint32_t)&g_buddy_lists.node4k_first);
-	// print_newline();
+	// -- Initialize the highest order nodes. Add them to the free lists
 
 	BUDDY_NODE* prev_node = NULL;
 	for (size_t i = 0; i < max_block_count_re; ++i) {
@@ -227,29 +180,10 @@ void memory_init() {
 
 	}
 
-	g_heap_body_buddy = buddy_body_start;
 	g_buddy_lists.node128k_first = (BUDDY_NODE*)g_heapStart_buddy;
 
-	BUDDY_NODE* bn_walk = g_buddy_lists.node128k_first;
-	for (size_t i = 0; i < 3; i++) {
-
-		// print_string("Location: ");
-		// print_dword((uint32_t)bn_walk->address);
-		// print_string(" Address: ");
-		// print_dword((uint32_t)bn_walk);
-		// print_newline();
-
-		bn_walk = bn_walk->list_next;
-	}
-
-	BUDDY_NODE* bn_last = g_buddy_lists.node128k_first;
-	while (bn_last->list_next != NULL) bn_last = bn_last->list_next;
-
-	// print_string("Last 128K node Location: ");
-	// print_dword((uint32_t)bn_last->address);
-	// print_string(" Address: ");
-	// print_dword((uint32_t)bn_last);
-	// print_newline();
+	// -- Set the heap body start address
+	g_heap_body_buddy = buddy_body_start;
 
 	return;
 
@@ -274,13 +208,6 @@ void* kalloc(size_t page_count) {
 
 	uint32_t block_level = page_count_po2;
 
-	// print_string("page_count: ");
-	// print_dword(page_count);
-	// print_newline();
-	// print_string("page_count_po2: ");
-	// print_dword(page_count_po2);
-	// print_newline();
-
 	BUDDY_NODE** buddy_list_check_start = (BUDDY_NODE**)&g_buddy_lists.node4k_first;
 	uint32_t buddy_list_check_start_index = 0x0;
 	while (page_count_po2 != 1) {
@@ -289,34 +216,10 @@ void* kalloc(size_t page_count) {
 	} 
 	buddy_list_check_start += buddy_list_check_start_index;
 
-	// print_string("buddy_list_check_start_index: ");
-	// print_dword(buddy_list_check_start_index);
-	// print_newline();
-
-	// print_string("block_level: ");
-	// print_dword(block_level);
-	// print_newline();
-
 	while (*buddy_list_check_start == NULL) {
 		buddy_list_check_start++;
 		block_level <<= 1;
 	}
-
-	// print_string("buddy_list_check_start: ");
-	// print_dword((uint32_t)buddy_list_check_start);
-	// print_newline();
-
-	// print_string("buddy_list_check_start dereferenced: ");
-	// print_dword((uint32_t)*buddy_list_check_start);
-	// print_newline();
-
-	// print_string("block_level: ");
-	// print_dword(block_level);
-	// print_newline();
-
-	// print_string("first list item: ");
-	// print_dword((uint32_t)(*buddy_list_check_start)->address);
-	// print_newline();
 
 	BUDDY_NODE* bn_free = (*buddy_list_check_start);
 	// -- Check if it is not max block
@@ -334,10 +237,6 @@ void* kalloc(size_t page_count) {
 	if (block_level == 0x20) {
 		while (bn_free->status == BUDDY_NODE_STATUS_ALLOCATED) bn_free = bn_free->list_next; 
 	}
-
-	// print_string("free item: ");
-	// print_dword((uint32_t)bn_free->address);
-	// print_newline();
 
 	// -- Mark it as used
 
@@ -364,23 +263,7 @@ void* kalloc(size_t page_count) {
 		leaf_space_help >>= 1; 
 	}
 
-	// print_string("bn_free address: ");
-	// print_dword((uint32_t)bn_free->address);
-	// print_newline();
-
-	// print_string("bn_free type: ");
-	// print_byte(bn_free->type);
-	// print_newline();
-
 	while (split_size != 0) {
-
-		// print_string("leaf_space: ");
-		// print_dword(leaf_space);
-		// print_newline();
-
-		// print_string("initial_size: ");
-		// print_dword(initial_size);
-		// print_newline();
 
 		BUDDY_NODE* leaf_left = split_node + 1;
 		BUDDY_NODE* leaf_right = leaf_left + leaf_space;
@@ -392,9 +275,6 @@ void* kalloc(size_t page_count) {
 
 		if (split_size == initial_size) {
 
-			// print_string("Nono split: ");
-			// print_newline();
-
 			split_size = 0;
 
 			split_node->leaf_left = NULL;
@@ -403,28 +283,14 @@ void* kalloc(size_t page_count) {
 		}
 		else if (split_size > initial_size / 2) {
 
-			// print_string("Right split: ");
-			// print_newline();
-
 			init_bnode(leaf_left, BUDDY_NODE_STATUS_ALLOCATED, split_node->type / 2, BUDDY_NODE_SIDEDNESS_LEFT, split_node->address, NULL, NULL, NULL, NULL);
 			init_bnode(leaf_right, BUDDY_NODE_STATUS_ALLOCATED, split_node->type / 2, BUDDY_NODE_SIDEDNESS_RIGHT, split_node->address + split_node->type * G_HEAP_PAGE_SIZE / 2, NULL, NULL, NULL, NULL);
-
-			// print_string("leaf_left address: ");
-			// print_dword((uint32_t)leaf_left->address);
-			// print_newline();
-
-			// print_string("leaf_left type: ");
-			// print_byte(leaf_left->type);
-			// print_newline();
 			
 			split_size -= initial_size / 2;
 			split_node = leaf_right;
 
 		}
 		else if (split_size == initial_size / 2) {
-
-			// print_string("No split: ");
-			// print_newline();
 
 			init_bnode(leaf_left, BUDDY_NODE_STATUS_ALLOCATED, split_node->type / 2, BUDDY_NODE_SIDEDNESS_LEFT, split_node->address, NULL, NULL, NULL, NULL);
 			init_bnode(leaf_right, BUDDY_NODE_STATUS_UNALLOCATED, split_node->type / 2, BUDDY_NODE_SIDEDNESS_RIGHT, split_node->address + split_node->type * G_HEAP_PAGE_SIZE / 2, NULL, NULL, NULL, NULL);
@@ -438,9 +304,6 @@ void* kalloc(size_t page_count) {
 
 		}
 		else {
-
-			// print_string("Left split: ");
-			// print_newline();
 
 			init_bnode(leaf_left, BUDDY_NODE_STATUS_ALLOCATED, split_node->type / 2, BUDDY_NODE_SIDEDNESS_LEFT, split_node->address, NULL, NULL, NULL, NULL);
 			init_bnode(leaf_right, BUDDY_NODE_STATUS_UNALLOCATED, split_node->type / 2, BUDDY_NODE_SIDEDNESS_RIGHT, split_node->address + split_node->type * G_HEAP_PAGE_SIZE / 2, NULL, NULL, NULL, NULL);
@@ -458,14 +321,6 @@ void* kalloc(size_t page_count) {
 
 	}
 
-	// print_string("split_node type: ");
-	// print_byte(split_node->type);
-	// print_newline();
-
-	// print_string("split_node address: ");
-	// print_dword((uint32_t)split_node->address);
-	// print_newline();
-
 	return bn_free->address;
 
 }
@@ -477,44 +332,13 @@ Return:			NONE
 */
 void kfree(void* address, size_t page_count) {
 
-	// print_string("To free at address: ");
-	// print_dword((uint32_t)address);
-	// print_newline();
-
-	// print_string("Heap body start at: ");
-	// print_dword((uint32_t)g_heap_body_buddy);
-	// print_newline();
-
-	// print_string("Buddy_list: ");
-	// print_newline();
-	// print_dword((uint32_t)g_buddy_lists.node4k_first->address);
-	// print_newline();
-	// print_dword((uint32_t)g_buddy_lists.node8k_first->address);
-	// print_newline();
-	// print_dword((uint32_t)g_buddy_lists.node16k_first->address);
-	// print_newline();
-	// print_dword((uint32_t)g_buddy_lists.node32k_first->address);
-	// print_newline();
-	// print_dword((uint32_t)g_buddy_lists.node64k_first->address);
-	// print_newline();
-	// print_dword((uint32_t)g_buddy_lists.node128k_first->address);
-	// print_newline();
-
 	// -- Get the highest order address
 
 	uint32_t* highest_order_address = (uint32_t*)((uint32_t)address / G_HEAP_MAX_BLOCK_SIZE);
 	highest_order_address = (uint32_t*)((uint32_t)highest_order_address * G_HEAP_MAX_BLOCK_SIZE);
 
-	// print_string("Max order address: ");
-	// print_dword((uint32_t)highest_order_address);
-	// print_newline();
-
 	BUDDY_NODE* high_order_node = g_buddy_lists.node128k_first;
 	while (high_order_node->address != highest_order_address) high_order_node = high_order_node->list_next;
-
-	// print_string("High order node: ");
-	// print_dword((uint32_t)high_order_node);
-	// print_newline();
 
 	// -- Find root node
 	BUDDY_NODE* root_bn = high_order_node;
@@ -527,25 +351,8 @@ void kfree(void* address, size_t page_count) {
 		}
 	}
 
-	// print_string("Root node: ");
-	// print_dword((uint32_t)root_bn->address);
-	// print_newline();
-
-	// print_string("Root node type: ");
-	// print_byte(root_bn->type);
-	// print_newline();
-	// print_string("Root left leaf: ");
-	// print_dword((uint32_t)root_bn->leaf_left);
-	// print_newline();
-	// print_string("Root right leaf: ");
-	// print_dword((uint32_t)root_bn->leaf_right);
-	// print_newline();
-
-
 	merge_bnode(root_bn, page_count);
-
 	merge_bnode_nolimit(high_order_node);
-
 
 	// Put root onto free lists if it was not merged in merge_bnode_nolimit() and is not max block
 	if (root_bn != high_order_node && root_bn->status == BUDDY_NODE_STATUS_UNALLOCATED) {
@@ -563,17 +370,7 @@ void kfree(void* address, size_t page_count) {
 		(*free_lists)->list_prev = root_bn;		
 		*free_lists = root_bn;
 
-		// print_string("Pushing onto free lists: ");
-		// print_dword((uint32_t)root_bn->address);
-		// print_string(", type ");
-		// print_byte(root_bn->type);
-		// print_newline();
-
 	}
-
-	// print_string("Root status: ");
-	// print_byte(root_bn->status);
-	// print_newline();
 
 	return;
 
@@ -587,12 +384,6 @@ Return:			NONE
 */
 void merge_bnode_nolimit(BUDDY_NODE* bn) {
 
-	// print_string("Freeing ");
-	// print_dword((uint32_t)bn->address);
-	// print_string(", type ");
-	// print_byte(bn->type);
-	// print_newline();
-
 	if (bn->leaf_left && bn->leaf_right) {
 		if (bn->leaf_left) {
 			merge_bnode_nolimit(bn->leaf_left);
@@ -601,7 +392,7 @@ void merge_bnode_nolimit(BUDDY_NODE* bn) {
 			merge_bnode_nolimit(bn->leaf_right);
 		}
 
-		if(bn->leaf_left->status == BUDDY_NODE_STATUS_UNALLOCATED && bn->leaf_right->status == BUDDY_NODE_STATUS_UNALLOCATED) {
+		if (bn->leaf_left->status == BUDDY_NODE_STATUS_UNALLOCATED && bn->leaf_right->status == BUDDY_NODE_STATUS_UNALLOCATED) {
 
 			BUDDY_NODE** free_lists = (BUDDY_NODE**)&g_buddy_lists.node4k_first;
 			uint32_t order = bn->leaf_left->type;
@@ -643,7 +434,9 @@ void merge_bnode_nolimit(BUDDY_NODE* bn) {
 
 	}
 	else {
+
 		return;
+	
 	}
 
 }
@@ -656,12 +449,6 @@ Return:			NONE
 void merge_bnode(BUDDY_NODE* bn, size_t limit) {
 
 	// All nodes that are called by merge_bnode are allocated
-
-	// print_string("Freeing ");
-	// print_dword((uint32_t)bn->address);
-	// print_string(", type ");
-	// print_byte(bn->type);
-	// print_newline();
 
 	// If the node has any leaves
 	if (bn->leaf_left != NULL && bn->leaf_right != NULL) {
@@ -685,18 +472,8 @@ void merge_bnode(BUDDY_NODE* bn, size_t limit) {
 
 		// If both leaves are unallocated declare parent as unallocated
 		if(bn->leaf_left->status == BUDDY_NODE_STATUS_UNALLOCATED && bn->leaf_right->status == BUDDY_NODE_STATUS_UNALLOCATED) {
-			// print_string("Merging leaves of  ");
-			// print_dword((uint32_t)bn->address);
-			// print_string(", type ");
-			// print_byte(bn->type);
-			// print_newline();
 
 			if (bn->leaf_left->list_next != NULL || bn->leaf_left->list_prev != NULL || *free_lists == bn->leaf_left) {
-				// print_string("Removing from free lists  ");
-				// print_dword((uint32_t)bn->leaf_left->address);
-				// print_string(", type ");
-				// print_byte(bn->leaf_left->type);
-				// print_newline();
 				if (*free_lists == bn->leaf_left) {
 					*free_lists = bn->leaf_left->list_next;
 				}
@@ -707,11 +484,6 @@ void merge_bnode(BUDDY_NODE* bn, size_t limit) {
 			}
 
 			if (bn->leaf_right->list_next != NULL || bn->leaf_right->list_prev != NULL || *free_lists == bn->leaf_right) {
-				// print_string("Removing from free lists  ");
-				// print_dword((uint32_t)bn->leaf_right->address);
-				// print_string(", type ");
-				// print_byte(bn->leaf_right->type);
-				// print_newline();
 				if (*free_lists == bn->leaf_right) {
 					*free_lists = bn->leaf_right->list_next;
 				}
