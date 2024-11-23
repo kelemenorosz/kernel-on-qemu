@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "print.h"
+#include "serial.h"
 
 #define G_HEAP_PAGE_SIZE 0x1000
 
@@ -321,6 +322,12 @@ void* kalloc(size_t page_count) {
 
 	}
 
+	serial_write_string("[INFO] Allocating 0x");
+	serial_write_dword(page_count);
+	serial_write_string(" pages AT 0x");
+	serial_write_dword((uint32_t)bn_free->address);
+	serial_write_newline();
+
 	return bn_free->address;
 
 }
@@ -331,6 +338,12 @@ Description: 	Frees 'page_count' pages starting from address 'address'.
 Return:			NONE
 */
 void kfree(void* address, size_t page_count) {
+
+	serial_write_string("[INFO] Freeing 0x");
+	serial_write_dword(page_count);
+	serial_write_string(" pages AT 0x");
+	serial_write_dword((uint32_t)address);
+	serial_write_newline();
 
 	// -- Get the highest order address
 

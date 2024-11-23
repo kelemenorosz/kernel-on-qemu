@@ -21,7 +21,7 @@ all: $(BUILD_DIR)/$(KERNEL_FILE) $(BOOTLOADER_OBJ)
 	echo "Done"
 
 $(BUILD_DIR)/$(KERNEL_FILE): $(KERNEL_OBJ)
-	$(CC) -T $(KERNEL_DIR)/linker.ld -o $@ -ffreestanding -O2 -nostdlib $(BUILD_DIR)/$(KERNEL_DIR)/kernel_start.s.o $(filter-out $(BUILD_DIR)/$(KERNEL_DIR)/kernel_start.s.o,$(KERNEL_OBJ)) -lgcc
+	$(CC) -T $(KERNEL_DIR)/linker.ld -o $@ -ffreestanding -O2 -nostdlib -g $(BUILD_DIR)/$(KERNEL_DIR)/kernel_start.s.o $(filter-out $(BUILD_DIR)/$(KERNEL_DIR)/kernel_start.s.o,$(KERNEL_OBJ)) -lgcc
 	cp $@ ./
 
 $(BUILD_DIR)/$(BOOTLOADER_DIR)%.asm.bin: $(BOOTLOADER_DIR)%.asm
@@ -35,4 +35,4 @@ $(BUILD_DIR)/$(KERNEL_DIR)%.s.o: $(KERNEL_DIR)%.s
 
 $(BUILD_DIR)/$(KERNEL_DIR)%.c.o: $(KERNEL_DIR)%.c
 	mkdir -p $(dir $@)
-	$(CC) -c $< -o $@ $(INCLUDE_FLAGS) -std=gnu99 -ffreestanding -O2 -Wall -Wextra
+	$(CC) -c $< -o $@ $(INCLUDE_FLAGS) -g -std=gnu99 -ffreestanding -O2 -Wall -Wextra

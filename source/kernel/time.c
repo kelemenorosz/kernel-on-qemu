@@ -7,6 +7,7 @@
 #include "io.h"
 #include "print.h"
 #include "memory.h"
+#include "serial.h"
 
 #define PIT_RELOAD_VALUE 1193
 #define NANOSECONDS_BETWEEN_TICKS 999847
@@ -74,6 +75,13 @@ void sleep(uint32_t ticks_to_sleep) {
 	// print_dword((uint32_t)g_current_task_state);
 	// print_newline();
 
+	serial_write_string("[INFO] Pushing process onto DELTA_QUEUE with ESP 0x");
+	serial_write_dword(g_current_task_state->esp);
+	serial_write_string(" for 0x");
+	serial_write_dword(ticks_to_sleep);
+	serial_write_string(" ticks");
+	serial_write_newline();
+
 	enable_interrupts();
 
 	// Raise the task switching interrupt
@@ -96,8 +104,10 @@ Return:			NONE
 */
 void time_init() {
 
+	disable_interrupts();
 	g_delta_queue = (DELTA_QUEUE*)kalloc(1);
 	g_delta_queue->first = NULL;
+	enable_interrupts();
 
 	PIT_init();
 	register_interrupt(interrupt_wrapper_PIT, 0x0);

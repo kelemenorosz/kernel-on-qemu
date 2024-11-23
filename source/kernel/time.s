@@ -9,7 +9,15 @@ interrupt_wrapper_PIT:
 	push %ebp
 	mov %esp, %ebp
 
+	push %eax
+	push %ecx
+	push %edx
+
 	call interrupt_function_PIT
+
+	pop %edx
+	pop %ecx
+	pop %eax
 
 	cmpl $0x0, g_scheduler_time
 	jne interrupt_wrapper_PIT_exit
@@ -17,8 +25,16 @@ interrupt_wrapper_PIT:
 	cmpl $0x0, g_scheduler_running
 	je interrupt_wrapper_PIT_exit
 
+	push %eax
+	push %ecx
+	push %edx
+
 	call scheduler
 	call reset_scheduler_time
+
+	pop %edx
+	pop %ecx
+	pop %eax
 
 	push %eax
 	push %ebx
@@ -56,7 +72,15 @@ interrupt_wrapper_software_blocking:
 	push %ebp
 	mov %esp, %ebp
 
+	push %eax
+	push %ecx
+	push %edx
+
 	call scheduler
+
+	pop %edx
+	pop %ecx
+	pop %eax
 
 	push %eax
 	push %ebx

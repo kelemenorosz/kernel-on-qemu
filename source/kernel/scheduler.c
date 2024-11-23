@@ -7,6 +7,7 @@
 #include "print.h"
 #include "interrupt.h"
 #include "time.h"
+#include "serial.h"
 
 typedef	struct __attribute__((__packed__)) PROCESS_FRAME {
 
@@ -65,6 +66,8 @@ Return:			NONE
 */
 void scheduler_init() {
 
+	disable_interrupts();
+
 	TASK_STATE* task_state = (TASK_STATE*)kalloc(1);
 	task_state->next = NULL;
 	task_state->is_blocking = 0x0;
@@ -78,6 +81,8 @@ void scheduler_init() {
 	// Create idle task process
 	register_idle_task(idle_task);
 
+	enable_interrupts();
+
 	return;
 
 }
@@ -90,9 +95,11 @@ Return:			NONE
 */
 void register_idle_task(void(*task_func)(void)) {
 
+	disable_interrupts();
 	TASK_STATE* task_state = (TASK_STATE*)kalloc(1);
 	void* stack_bottom = kalloc(0x10); 
 	void* stack_top = stack_bottom + 0x10 * 0x1000; 
+	enable_interrupts();
 
 	PROCESS_FRAME* process_frame = stack_top - sizeof(PROCESS_FRAME);
 	process_frame->eflags = 0x202; // This should be set with a bit more thought. For now bits 9 and 1 are set.
@@ -125,9 +132,11 @@ Return:			NONE
 */
 void task_create(void(*task_func)(void)){
 
+	disable_interrupts();
 	TASK_STATE* task_state = (TASK_STATE*)kalloc(1);
 	void* stack_bottom = kalloc(0x10); 
 	void* stack_top = stack_bottom + 0x10 * 0x1000; 
+	enable_interrupts();
 
 	PROCESS_FRAME* process_frame = stack_top - sizeof(PROCESS_FRAME);
 	process_frame->eflags = 0x202; // This should be set with a bit more thought. For now bits 9 and 1 are set.
@@ -172,13 +181,25 @@ TASK_STATE* pop_task_queue() {
 		TASK_QUEUE_ELEMENT* tq_element = g_task_queue->first;
 		g_task_queue->first = NULL;
 		g_task_queue->last = NULL;
-		return tq_element->task_state;
+		TASK_STATE* task_state = tq_element->task_state;
+
+		serial_write_string("[INFO] Popping process from TASK_QUEUE with ESP 0x");
+		serial_write_dword(task_state->esp);
+		serial_write_newline();
+
+		kfree(tq_element, 1);
+		return task_state;
 	
 	} else {
 
 		TASK_QUEUE_ELEMENT* tq_element = g_task_queue->first;
 		g_task_queue->first = g_task_queue->first->next;
 		TASK_STATE* task_state = tq_element->task_state;
+
+		serial_write_string("[INFO] Popping process from TASK_QUEUE with ESP 0x");
+		serial_write_dword(task_state->esp);
+		serial_write_newline();
+
 		kfree(tq_element, 1);
 		return task_state;
 
@@ -192,6 +213,10 @@ Description: 	Pushes an element onto the task queue.
 Return:			NONE
 */
 void push_task_queue(TASK_STATE* task_state) {
+
+	serial_write_string("[INFO] Pushing process onto TASK_QUEUE with ESP 0x");
+	serial_write_dword(task_state->esp);
+	serial_write_newline();
 
 	TASK_QUEUE_ELEMENT* tq_element = kalloc(1);
 	tq_element->task_state = task_state;
@@ -256,9 +281,9 @@ void scheduler() {
 	// Clear the delta queue as much as you can and add the tasks onto the task queue
 	DELTA_QUEUE_ELEMENT* dq_element = g_delta_queue->first;
 	while (dq_element != NULL && dq_element->ticks_to_wakeup == 0) {
-		// print_string("Pushing back TASK_STATE: ");
-		// print_dword((uint32_t)dq_element->task_state);
-		// print_newline();
+		serial_write_string("[INFO] Popping of process from DELTA_QUEUE with ESP 0x");
+		serial_write_dword(dq_element->task_state->esp);
+		serial_write_newline();
 		dq_element->task_state->is_blocking = 0x0;
 		push_task_queue(dq_element->task_state);
 		g_delta_queue->first = dq_element->next;

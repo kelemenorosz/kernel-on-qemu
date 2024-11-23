@@ -37,6 +37,11 @@ typedef struct __attribute__((__packed__)) ETHERNET_DEVICE {
 
 } ETHERNET_DEVICE;
 
+typedef struct __attribute__((__packed__)) ETHERNET_TOKEN {
+
+} ETHERNET_TOKEN;
+
 void ethernet_init(PCI_ENUM_TOKEN* token);
+ETHERNET_TOKEN* ksocket(uint32_t ip, uint32_t port, uint32_t protocol); 
 
 #endif /* ETHERNET_H */

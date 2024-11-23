@@ -12,6 +12,7 @@
 #include "dhcp.h"
 #include "packet.h"
 #include "netswap.h"
+#include "serial.h"
 
 #define REG_CTRL 0x00
 #define REG_STATUS 0x08
@@ -121,9 +122,11 @@ void ethernet_init(PCI_ENUM_TOKEN* token) {
 	uint32_t mm_register_base_address = pci_bar0 & ~0x7;
 	g_reg_base_addr = mm_register_base_address;
 
+	disable_interrupts();
 	print_string("PCI BAR0: ");
 	print_dword(pci_bar0);
 	print_newline();
+	enable_interrupts();
 
 	// -- Reset the ethernet controller
 
@@ -167,7 +170,14 @@ void ethernet_init(PCI_ENUM_TOKEN* token) {
 
 	// -- Transmit packets
 
+	disable_interrupts();
+	serial_write_string("[ETHERNET] Transmitting packets.");
+	serial_write_newline();
+	enable_interrupts();
+
+	disable_interrupts();
 	void* transmit_buffer = kalloc(4);
+	enable_interrupts();
 
 	NET_PACKET packet = {};
 	packet.start = transmit_buffer + 0xFF;
@@ -181,6 +191,13 @@ void ethernet_init(PCI_ENUM_TOKEN* token) {
 	memset((void*)&ethernet_header->dest_addr[0], 0xFF, 6);
 	memcpy((void*)&ethernet_header->src_addr[0], (void*)&g_ethernet_device.mac_addr[0], 6);
 	ethernet_header->ether_type = netswap16(ETHER_TYPE_IPV4);
+
+	disable_interrupts();
+	serial_write_string("[ETHERNET] Packet AT 0x");
+	serial_write_dword((uint32_t)transmit_buffer);
+	serial_write_string(" assembled.");
+	serial_write_newline();
+	enable_interrupts();
 
 	tx_send(packet.start, packet.end - packet.start);
 
@@ -213,7 +230,9 @@ void rx_poll() {
 
 	for (size_t i = 0; i < RX_DESCRIPTOR_COUNT; ++i) {
 		if (g_ethernet_device.rxdl[i].status & 1) {
+			disable_interrupts();
 			print_string("BO");
+			enable_interrupts();
 		}
 	}
 
@@ -259,7 +278,10 @@ void tx_init() {
 
 	// print_tx_regs();
 
+	disable_interrupts();
 	TX_DESCRIPTOR* txdl = (TX_DESCRIPTOR*)kalloc(0x2);
+	enable_interrupts();
+
 	for (size_t i = 0; i < TX_DESCRIPTOR_COUNT; ++i) {
 	
 		memset(&txdl[i], 0, sizeof(TX_DESCRIPTOR));
@@ -300,7 +322,7 @@ void tx_init() {
 
 void rx_init() {
 
-	print_rx_regs();
+	// print_rx_regs();
 
 	// -- Clear the multicast table array
 
@@ -310,12 +332,16 @@ void rx_init() {
 	// 8K for the descriptor list
 	// 4k for each descriptor buffer
 
+	disable_interrupts();
 	RX_DESCRIPTOR* rxdl = (RX_DESCRIPTOR*)kalloc(0x2);
+	enable_interrupts();
 
 	for (size_t i = 0; i < RX_DESCRIPTOR_COUNT; ++i) {
 
 		memset(&rxdl[i], 0, sizeof(RX_DESCRIPTOR));
+		disable_interrupts();
 		rxdl[i].addr_low = (uint32_t)kalloc(0x1);
+		enable_interrupts();
 
 	}
 	
@@ -397,6 +423,7 @@ void mmio_write(uint32_t addr, uint32_t offset, uint32_t value) {
 
 void print_TX_DESCRIPTOR(TX_DESCRIPTOR* tx_desc) {
 
+	disable_interrupts();
 	print_string("TX DESC addr_low: ");
 	print_dword(tx_desc->addr_low);
 	print_newline();
@@ -428,6 +455,7 @@ void print_TX_DESCRIPTOR(TX_DESCRIPTOR* tx_desc) {
 	print_string("TX DESC special: ");
 	print_word(tx_desc->special);
 	print_newline();
+	enable_interrupts();
 
 	return;
 
@@ -435,6 +463,7 @@ void print_TX_DESCRIPTOR(TX_DESCRIPTOR* tx_desc) {
 
 void print_RX_DESCRIPTOR(RX_DESCRIPTOR* rx_desc) {
 
+	disable_interrupts();
 	print_string("RX DESC addr_low: ");
 	print_dword(rx_desc->addr_low);
 	print_newline();
@@ -462,6 +491,7 @@ void print_RX_DESCRIPTOR(RX_DESCRIPTOR* rx_desc) {
 	print_string("RX DESC special: ");
 	print_word(rx_desc->special);
 	print_newline();
+	enable_interrupts();
 
 	return;
 
@@ -475,6 +505,7 @@ void print_tx_regs() {
 	uint32_t tdh = mmio_read(g_reg_base_addr, REG_TDH);
 	uint32_t tdt = mmio_read(g_reg_base_addr, REG_TDT);
 
+	disable_interrupts();
 	print_string("TDBAL: ");
 	print_dword(tdbal);
 	print_newline();
@@ -494,6 +525,7 @@ void print_tx_regs() {
 	print_string("TDT: ");
 	print_dword(tdt);
 	print_newline();
+	enable_interrupts();
 
 	return;
 
@@ -507,6 +539,7 @@ void print_rx_regs() {
 	uint32_t rdh = mmio_read(g_reg_base_addr, REG_RDH);
 	uint32_t rdt = mmio_read(g_reg_base_addr, REG_RDT);
 
+	disable_interrupts();
 	print_string("RDBAL: ");
 	print_dword(rdbal);
 	print_newline();
@@ -526,6 +559,7 @@ void print_rx_regs() {
 	print_string("RDT: ");
 	print_dword(rdt);
 	print_newline();
+	enable_interrupts();
 
 	return;
 

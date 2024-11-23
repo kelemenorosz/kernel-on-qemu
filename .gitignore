@@ -3,7 +3,9 @@ build/
 bootloader_large
 /bootloader
 run.sh
+setup_ethernet.sh
 kernel.dump
+serial.log
 /kernel
 kernel_extract.bin
 qemu_ethernet_dump.dat
