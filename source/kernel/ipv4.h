@@ -6,6 +6,7 @@
 
 #define IPV4_PROTOCOL_UDP 17
 
-void req_ipv4(ETHERNET_DEVICE* ethernet_device, NET_PACKET* packet, uint8_t protocol);
+void ipv4_req(NET_PACKET* pkt, uint8_t protocol, uint32_t ip);
+uint32_t ipv4_decode(void* buf);
 
 #endif /* IPV4_H */

@@ -18,6 +18,7 @@
 #include "scheduler.h"
 #include "eflags.h"
 #include "serial.h"
+#include "dhcp.h"
 
 const size_t VGA_WIDTH = 0x50;
 const size_t VGA_HEIGHT = 0x19;
@@ -66,6 +67,12 @@ void kernel_main() {
 	enable_interrupts();
 
 	ethernet_init(&ethernet_pci_token);
+
+	uint8_t ip_establised = dhcp_client();
+	if (!ip_establised) {
+		print_string("IP address established.");
+		print_newline();
+	}
 
 	while (true) {
 

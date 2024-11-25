@@ -4,6 +4,7 @@
 #include "ethernet.h"
 #include "packet.h"
 
-void req_dhcp(ETHERNET_DEVICE* ethernet_device, NET_PACKET* packet);
+uint8_t dhcp_client();
+uint32_t dhcp_req(void* buf, uint32_t req);
 
 #endif /* DHCP_H */

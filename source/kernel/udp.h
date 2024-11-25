@@ -4,6 +4,7 @@
 #include "ethernet.h"
 #include "packet.h"
 
-void req_udp(ETHERNET_DEVICE* ethernet_device, NET_PACKET* packet, uint16_t src_port, uint16_t dest_port);
+void udp_req(NET_PACKET* pkt, uint32_t send_port, uint32_t recv_port, uint32_t ip);
+uint32_t udp_decode(void* buf);
 
 #endif /* UDP_H */

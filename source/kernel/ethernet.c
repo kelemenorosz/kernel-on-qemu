@@ -13,6 +13,9 @@
 #include "packet.h"
 #include "netswap.h"
 #include "serial.h"
+#include "udp.h"
+#include "packet.h"
+#include "ipv4.h"
 
 #define REG_CTRL 0x00
 #define REG_STATUS 0x08
@@ -96,15 +99,15 @@ void rx_poll();
 extern uint16_t* g_VGABuffer;
 extern size_t VGA_WIDTH;
 
-typedef struct __attribute__((__packed__)) ETHERNET_HEADER {
+typedef struct __attribute__((__packed__)) ETHER_HEADER {
 
 	uint8_t dest_addr[6];
 	uint8_t src_addr[6];
 	uint16_t ether_type;
 
-} ETHERNET_HEADER;
+} ETHER_HEADER;
 
-#define ETHER_TYPE_IPV4 0x0800
+SOCKET_LIST* g_sck_list = NULL;
 
 ETHERNET_DEVICE g_ethernet_device = {};
 
@@ -168,48 +171,58 @@ void ethernet_init(PCI_ENUM_TOKEN* token) {
 	rx_init();
 	tx_init();
 
+	// -- Setup socket list
+	disable_interrupts();
+	g_sck_list = (SOCKET_LIST*)kalloc(1);
+	enable_interrupts();
+	g_sck_list->sck_head = NULL;
+
+	// -- Setup polling process
+
+	task_create(rx_poll);
+
 	// -- Transmit packets
 
-	disable_interrupts();
-	serial_write_string("[ETHERNET] Transmitting packets.");
-	serial_write_newline();
-	enable_interrupts();
+	// disable_interrupts();
+	// serial_write_string("[ETHERNET] Transmitting packets.");
+	// serial_write_newline();
+	// enable_interrupts();
 
-	disable_interrupts();
-	void* transmit_buffer = kalloc(4);
-	enable_interrupts();
+	// disable_interrupts();
+	// void* transmit_buffer = kalloc(4);
+	// enable_interrupts();
 
-	NET_PACKET packet = {};
-	packet.start = transmit_buffer + 0xFF;
-	packet.end = transmit_buffer + 0xFF;
+	// NET_PACKET packet = {};
+	// packet.start = transmit_buffer + 0xFF;
+	// packet.end = transmit_buffer + 0xFF;
 
-	req_dhcp(&g_ethernet_device, &packet);
+	// req_dhcp(&g_ethernet_device, &packet);
 
-	packet.start -= sizeof(ETHERNET_HEADER);
-	ETHERNET_HEADER* ethernet_header = (ETHERNET_HEADER*)packet.start;
+	// packet.start -= sizeof(ETHERNET_HEADER);
+	// ETHERNET_HEADER* ethernet_header = (ETHERNET_HEADER*)packet.start;
 
-	memset((void*)&ethernet_header->dest_addr[0], 0xFF, 6);
-	memcpy((void*)&ethernet_header->src_addr[0], (void*)&g_ethernet_device.mac_addr[0], 6);
-	ethernet_header->ether_type = netswap16(ETHER_TYPE_IPV4);
+	// memset((void*)&ethernet_header->dest_addr[0], 0xFF, 6);
+	// memcpy((void*)&ethernet_header->src_addr[0], (void*)&g_ethernet_device.mac_addr[0], 6);
+	// ethernet_header->ether_type = netswap16(ETHER_TYPE_IPV4);
 
-	disable_interrupts();
-	serial_write_string("[ETHERNET] Packet AT 0x");
-	serial_write_dword((uint32_t)transmit_buffer);
-	serial_write_string(" assembled.");
-	serial_write_newline();
-	enable_interrupts();
+	// disable_interrupts();
+	// serial_write_string("[ETHERNET] Packet AT 0x");
+	// serial_write_dword((uint32_t)transmit_buffer);
+	// serial_write_string(" assembled.");
+	// serial_write_newline();
+	// enable_interrupts();
 
-	tx_send(packet.start, packet.end - packet.start);
+	// tx_send(packet.start, packet.end - packet.start);
 
-	print_RX_DESCRIPTOR(g_ethernet_device.rxdl + 2);
+	// print_RX_DESCRIPTOR(g_ethernet_device.rxdl + 2);
 
-	while (1) {
+	// while (1) {
 
-		sleep(100);
-		rx_poll();
-		tx_send(packet.start, packet.end - packet.start);
+	// 	sleep(100);
+	// 	rx_poll();
+	// 	tx_send(packet.start, packet.end - packet.start);
 
-	}
+	// }
 
 	return;
 
@@ -226,14 +239,136 @@ void interrupt_function_ethernet() {
 
 }
 
+void ether_req(NET_PACKET* pkt, uint16_t ether_type) {
+
+	pkt->start -= sizeof(ETHER_HEADER);
+	ETHER_HEADER* ether_header = (ETHER_HEADER*)pkt->start;
+
+	memset((void*)&ether_header->dest_addr[0], 0xFF, 6);
+	memcpy((void*)&ether_header->src_addr[0], (void*)&g_ethernet_device.mac_addr[0], 6);
+	ether_header->ether_type = netswap16(ether_type);
+
+	return;
+
+}
+
+SOCKET* ksocket(uint32_t ip, uint32_t port, uint32_t protocol) {
+
+	disable_interrupts();
+	SOCKET* sck = (SOCKET*)kalloc(1);
+	enable_interrupts();
+
+	sck->ip = ip;
+	sck->port = port;
+	sck->protocol = protocol;
+	sck->recv_buffer = NULL;
+
+	sck->sck_next = g_sck_list->sck_head;
+	g_sck_list->sck_head = sck;
+
+	return sck;
+
+}
+
+void* kreceive(SOCKET* sck) {
+
+	while (sck->recv_buffer == NULL) sleep(1);
+	return sck->recv_buffer;
+
+}
+
+/* 
+Function: 		ksend
+Description: 	Prepares packet to be sent.
+				Receives buffer with data, wraps it in TCP/UDP, IP and ETH layers.
+Return:			NONE
+*/
+void ksend(SOCKET* sck, void* buf, uint32_t buf_len, uint32_t send_port, uint32_t ip) {
+
+	// -- Allocate buffer
+	
+	disable_interrupts();
+	void* wrap_buf = kalloc(1);
+	enable_interrupts();
+
+	// -- Copy to wrap buffer
+
+	memcpy(wrap_buf + 0x100, buf, buf_len);
+	NET_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100 + buf_len};
+
+	// -- Package
+
+	if (sck->protocol == ETHERNET_TRANSPORT_PROTOCOL_UDP) {
+
+		udp_req(&pkt, send_port, sck->port, ip);
+
+	}
+
+	tx_send(pkt.start, pkt.end - pkt.start);
+
+	return;
+
+}
+
+uint32_t ether_decode(void* buf) {
+
+	ETHER_HEADER* ether_header = (ETHER_HEADER*)buf;
+
+	disable_interrupts();
+	serial_write_string("[RX_ETH_HEADER] Ethernet header with destination mac address ");
+	for (uint8_t i = 0; i < 6; ++i) {
+		serial_write_byte(ether_header->dest_addr[i]);
+		if (i != 5) serial_write_string(":");
+	}
+	serial_write_newline();
+	serial_write_string("[RX_ETH_HEADER] Ethernet header with source mac address ");
+	for (uint8_t i = 0; i < 6; ++i) {
+		serial_write_byte(ether_header->src_addr[i]);
+		if (i != 5) serial_write_string(":");
+	}
+	serial_write_newline();
+	serial_write_string("[RX_ETH_HEADER] Ethernet header with ether type 0x");
+	serial_write_word(netswap16(ether_header->ether_type));
+	serial_write_newline();
+	enable_interrupts();
+
+	if (netswap16(ether_header->ether_type) == ETHER_TYPE_IPV4) {
+
+		return ipv4_decode(buf + sizeof(ETHER_HEADER));
+
+	}
+
+	return 0;
+
+}
+
+/* 
+Function: 		rx_poll
+Description: 	Ethernet RX polling process.
+Return:			NONE
+*/
 void rx_poll() {
 
-	for (size_t i = 0; i < RX_DESCRIPTOR_COUNT; ++i) {
-		if (g_ethernet_device.rxdl[i].status & 1) {
-			disable_interrupts();
-			print_string("BO");
-			enable_interrupts();
+	while (true) {
+
+		for (size_t i = 0; i < RX_DESCRIPTOR_COUNT; ++i) {
+			if (g_ethernet_device.rxdl[i].status & 1) {
+		
+				disable_interrupts();
+				serial_write_string("[RX_POLL] Packet received in descriptor 0x");
+				serial_write_dword(i);
+				serial_write_newline();
+				enable_interrupts();
+
+				if (!ether_decode((void*)g_ethernet_device.rxdl[i].addr_low)) g_ethernet_device.rxdl[i].status = 0;
+
+			}
 		}
+
+		// print_rx_regs();
+
+		sleep(10);
+
 	}
 
 	return;
@@ -350,7 +485,7 @@ void rx_init() {
 	mmio_write(g_reg_base_addr, REG_RDBAH, 0x0);
 	mmio_write(g_reg_base_addr, REG_RDLEN, RX_DESCRIPTOR_COUNT * sizeof(RX_DESCRIPTOR));
 	mmio_write(g_reg_base_addr, REG_RDH, 0x0);
-	mmio_write(g_reg_base_addr, REG_RDT, RX_DESCRIPTOR_COUNT - 1);
+	mmio_write(g_reg_base_addr, REG_RDT, RX_DESCRIPTOR_COUNT);
 
 	uint32_t rctl = 0x0;
 	rctl |= 1 << RCTL_EN_SHIFT;
@@ -367,7 +502,7 @@ void rx_init() {
 
 	g_ethernet_device.rxdl = rxdl;
 
-	print_rx_regs();
+	// print_rx_regs();
 
 	return;
 

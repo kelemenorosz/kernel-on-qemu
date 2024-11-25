@@ -8,6 +8,8 @@
 #include "packet.h"
 #include "udp.h"
 #include "netswap.h"
+#include "interrupt.h"
+#include "dhcp.h"
 
 typedef struct __attribute__((__packed__)) DHCP_HEADER {
 
@@ -35,78 +37,200 @@ typedef struct __attribute__((__packed__)) DHCP_HEADER {
 
 #define BOOTP_MAGIC_NUMBER 0x63825363
 
-#define BOOTP_OPTION_DHCP_MESSAGE_TYPE 53
-#define BOOTP_OPTION_REQESTED_IP_ADDRESS 50
-#define BOOTP_OPTION_PARAMETER_REQUEST_LIST 55
-#define BOOTP_OPTION_END 255
+#define BOOTP_OPTION_SUBNET_MASK 				1
+#define BOOTP_OPTION_ROUTER 					3
+#define BOOTP_OPTION_DOMAIN_NAME_SERVER 		6
+#define BOOTP_OPTION_REQESTED_IP_ADDRESS 		50
+#define BOOTP_OPTION_DHCP_MESSAGE_TYPE 			53
+#define BOOTP_OPTION_DHCP_SERVER_IDENTIFIER		54
+#define BOOTP_OPTION_PARAMETER_REQUEST_LIST 	55
+#define BOOTP_OPTION_END 						255
 
 #define DHCPDISCOVER 1
+#define DHCPOFFER 2
+#define DHCPREQUEST 3
+#define DHCPDECLINE 4
+#define DHCPACK 5
 
 #define BOOTP_PORT_CLIENT 68
 #define BOOTP_PORT_SERVER 67
 
-void req_dhcp(ETHERNET_DEVICE* ethernet_device, NET_PACKET* packet) {
+extern ETHERNET_DEVICE g_ethernet_device;
+uint32_t g_xid = 0;
+uint32_t g_dhcp_ip = 0;
+uint32_t g_dns_ip = 0;
+uint32_t g_this_ip = 0;
 
-	DHCP_HEADER* dhcp_header = (DHCP_HEADER*)packet->end;
+uint8_t dhcp_client() {
+
+	// -- Open socket on port 68
+	
+	SOCKET* sck = ksocket(0, 68, ETHERNET_TRANSPORT_PROTOCOL_UDP);
+
+	// -- Build DHCP_DISCOVER
+
+	disable_interrupts();
+	void* req_buf = kalloc(1);
+	enable_interrupts();
+
+	uint32_t req_len = dhcp_req(req_buf, DHCPDISCOVER);
+
+	// -- Send DHCP_DISCOVER
+
+	ksend(sck, req_buf, req_len, BOOTP_PORT_SERVER, 0);
+	
+	// -- Receive DHCP_OFFER
+
+	void* recv_buf = kreceive(sck);
+
+	DHCP_HEADER* dhcpoffer_header = (DHCP_HEADER*)recv_buf;
+	uint8_t* dhcpoffer_options = (uint8_t*)(recv_buf + sizeof(DHCP_HEADER));
+
+	uint8_t is_dhcpoffer = 0;
+
+	if (dhcpoffer_header->op == BOOTP_BOOTREPLY && *(uint32_t*)dhcpoffer_options == netswap32(BOOTP_MAGIC_NUMBER)) {
+		dhcpoffer_options += 4;
+		while (*dhcpoffer_options != BOOTP_OPTION_END) {
+				
+				switch(*dhcpoffer_options) {
+					case BOOTP_OPTION_DHCP_MESSAGE_TYPE:
+						if (*(dhcpoffer_options + 2) == DHCPOFFER) is_dhcpoffer = 1;
+						break;
+					case BOOTP_OPTION_DHCP_SERVER_IDENTIFIER:
+						g_dhcp_ip = *(uint32_t*)(dhcpoffer_options + 2);
+						g_dhcp_ip = netswap32(g_dhcp_ip);
+						break;
+					case BOOTP_OPTION_DOMAIN_NAME_SERVER:
+						g_dns_ip = *(uint32_t*)(dhcpoffer_options + 2);
+						g_dns_ip = netswap32(g_dns_ip);
+						break;
+					default:
+						break;
+				}
+				dhcpoffer_options += 2 + *(dhcpoffer_options + 1);
+		}	
+	}
+
+	if (is_dhcpoffer) {
+
+		g_this_ip = netswap32(dhcpoffer_header->yiaddr);
+
+	}
+
+	// -- Build DHCP_REQUEST
+
+	req_len = dhcp_req(req_buf, DHCPREQUEST);
+
+	// -- Send DHCP_REQUEST
+
+	ksend(sck, req_buf, req_len, BOOTP_PORT_SERVER, 0);	
+
+	// -- Clear socket buffer
+	sck->recv_buffer = NULL;
+	disable_interrupts();
+	kfree(recv_buf, 1);
+	enable_interrupts();
+
+	// -- Receive DHCP_ACK / DHCP_NAK
+	recv_buf = kreceive(sck);
+
+	DHCP_HEADER* dhcpack_header = (DHCP_HEADER*)recv_buf;
+	uint8_t* dhcpack_options = (uint8_t*)(recv_buf + sizeof(DHCP_HEADER));
+
+	uint8_t is_ack = 0;
+
+	if (dhcpack_header->op == BOOTP_BOOTREPLY && *(uint32_t*)dhcpack_options == netswap32(BOOTP_MAGIC_NUMBER)) {
+		dhcpack_options += 4;
+		while (*dhcpack_options != BOOTP_OPTION_END) {
+				
+				switch(*dhcpack_options) {
+					case BOOTP_OPTION_DHCP_MESSAGE_TYPE:
+						if (*(dhcpack_options + 2) == DHCPACK) is_ack = 1;
+						break;
+					default:
+						break;
+				}
+				dhcpack_options += 2 + *(dhcpack_options + 1);
+		}	
+	}
+
+	// -- Clear socket buffer
+	disable_interrupts();
+	kfree(recv_buf, 1);
+	enable_interrupts();
+
+	// -- TODO -- Close socket. There is not kclose()
+
+	return !is_ack;
+
+}
+
+uint32_t dhcp_req(void* buf, uint32_t req) {
+
+	DHCP_HEADER* dhcp_header = (DHCP_HEADER*)buf;
 	memset(dhcp_header, 0, sizeof(DHCP_HEADER));
 
 	dhcp_header->op = BOOTP_BOOTREQUEST;
 	dhcp_header->htype = ARP_HARDWARE_TYPE_ETHERNET;
-	dhcp_header->hlen = 6; // MAC address length in bytes
+	dhcp_header->hlen = 6;
 	dhcp_header->hops = 0;
-	dhcp_header->xid = 0x349A;
+	dhcp_header->xid = netswap32(g_xid++);
 	dhcp_header->secs = 0;
 	dhcp_header->flags = 0;
-	memcpy((void*)&dhcp_header->chaddr[0], (void*)&ethernet_device->mac_addr[0], 6); 
+	memcpy((void*)&dhcp_header->chaddr[0], (void*)&g_ethernet_device.mac_addr[0], 6); 
 
-	// for (uint8_t i = 0; i < 6; ++i) {
+	uint8_t* dhcp_options = (uint8_t*)(buf + sizeof(DHCP_HEADER));
+
+	if (req == DHCPDISCOVER) {
+
+		*(uint32_t*)dhcp_options = netswap32(BOOTP_MAGIC_NUMBER);
+		dhcp_options += 4;
+
+		*dhcp_options++ = BOOTP_OPTION_DHCP_MESSAGE_TYPE;
+		*dhcp_options++ = 1;
+		*dhcp_options++ = req;
+
+		*dhcp_options++ = BOOTP_OPTION_REQESTED_IP_ADDRESS;
+		*dhcp_options++ = 4;
+		*dhcp_options++ = 192;
+		*dhcp_options++ = 168;
+		*dhcp_options++ = 1;
+		*dhcp_options++ = 120;
+
+		*dhcp_options++ = BOOTP_OPTION_PARAMETER_REQUEST_LIST;
+		*dhcp_options++ = 3;
+		*dhcp_options++ = BOOTP_OPTION_SUBNET_MASK;
+		*dhcp_options++ = BOOTP_OPTION_ROUTER;
+		*dhcp_options++ = BOOTP_OPTION_DOMAIN_NAME_SERVER;
+
+	}
+	else if (req == DHCPREQUEST) {
+
+		dhcp_header->siaddr = netswap32(g_dhcp_ip);
+
+		*(uint32_t*)dhcp_options = netswap32(BOOTP_MAGIC_NUMBER);
+		dhcp_options += 4;
+
+		*dhcp_options++ = BOOTP_OPTION_DHCP_MESSAGE_TYPE;
+		*dhcp_options++ = 1;
+		*dhcp_options++ = req;
+
+		*dhcp_options++ = BOOTP_OPTION_REQESTED_IP_ADDRESS;
+		*dhcp_options++ = 4;
+		*(uint32_t*)dhcp_options = netswap32(g_this_ip);
+		dhcp_options += 4;
+
+		*dhcp_options++ = BOOTP_OPTION_DHCP_SERVER_IDENTIFIER;
+		*dhcp_options++ = 4;
+		*(uint32_t*)dhcp_options = netswap32(g_dhcp_ip);
+		dhcp_options += 4;
+
+	}
+
+	*dhcp_options++ = BOOTP_OPTION_END;
 	
-	// 	print_string("DHCP header chaddr: ");
-	// 	print_byte(dhcp_header->chaddr[i]);
-	// 	print_newline();
-	
-	// }
+	uint32_t msg_len = (void*)dhcp_options - buf;
 
-	uint8_t* options = (uint8_t*)(packet->end + sizeof(DHCP_HEADER)); 
-
-	*(uint32_t*)options = netswap32(BOOTP_MAGIC_NUMBER);
-	options += 4;
-
-	*options = BOOTP_OPTION_DHCP_MESSAGE_TYPE;
-	options++;
-	*options = 1; // Option length
-	options++;
-	*options = DHCPDISCOVER;
-	options++;
-
-	*options = BOOTP_OPTION_REQESTED_IP_ADDRESS;
-	options++;
-	*options = 4; // Option length
-	options++;
-	*options = 192;
-	*(options + 1) = 168;
-	*(options + 2) = 1;
-	*(options + 3) = 120;
-	options += 4;
-
-	*options = BOOTP_OPTION_PARAMETER_REQUEST_LIST;
-	options++;
-	*options = 3;
-	options++;
-	*options = 1;
-	options++;
-	*options = 3;
-	options++;
-	*options = 6;
-	options++;
-
-	*options = BOOTP_OPTION_END;
-	options++;
-
-	packet->end = (void*)options;
-
-	req_udp(ethernet_device, packet, BOOTP_PORT_CLIENT, BOOTP_PORT_SERVER);
-
-	return;
+	return msg_len;
 
 }
