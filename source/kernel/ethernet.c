@@ -14,8 +14,10 @@
 #include "netswap.h"
 #include "serial.h"
 #include "udp.h"
+#include "tcp.h"
 #include "packet.h"
 #include "ipv4.h"
+#include "arp.h"
 
 #define REG_CTRL 0x00
 #define REG_STATUS 0x08
@@ -84,8 +86,6 @@ uint16_t eeprom_read_eerd(uint8_t addr);
 void rx_init();
 void tx_init();
 
-void tx_send(void* buf, uint16_t len);
-
 extern void interrupt_wrapper_ethernet();
 void interrupt_function_ethernet();
 
@@ -110,6 +110,8 @@ typedef struct __attribute__((__packed__)) ETHER_HEADER {
 SOCKET_LIST* g_sck_list = NULL;
 
 ETHERNET_DEVICE g_ethernet_device = {};
+
+uint32_t g_rar_count = 1;
 
 void ethernet_init(PCI_ENUM_TOKEN* token) {
 
@@ -239,14 +241,35 @@ void interrupt_function_ethernet() {
 
 }
 
-void ether_req(NET_PACKET* pkt, uint16_t ether_type) {
+void ether_req(NET_PACKET* pkt, uint16_t ether_type, uint32_t ip) {
 
 	pkt->start -= sizeof(ETHER_HEADER);
 	ETHER_HEADER* ether_header = (ETHER_HEADER*)pkt->start;
 
-	memset((void*)&ether_header->dest_addr[0], 0xFF, 6);
-	memcpy((void*)&ether_header->src_addr[0], (void*)&g_ethernet_device.mac_addr[0], 6);
-	ether_header->ether_type = netswap16(ether_type);
+	if (ether_type == ETHER_TYPE_IPV4) {
+
+		if (ip == 0) {
+			memset((void*)&ether_header->dest_addr[0], 0xFF, 6); 
+		}
+		else {
+			while (arp_lookup(ip) == NULL) {
+				arp_req(ip);
+				sleep(5);
+			}
+			void* dest_eth_addr = arp_lookup(ip);
+			memcpy((void*)&ether_header->dest_addr[0], dest_eth_addr, 6);
+			 
+		}
+		memcpy((void*)&ether_header->src_addr[0], (void*)&g_ethernet_device.mac_addr[0], 6);
+		ether_header->ether_type = netswap16(ether_type);
+
+	}
+
+	if (ether_type == ETHER_TYPE_ARP) {
+		memset((void*)&ether_header->dest_addr[0], 0xFF, 6); 
+		memcpy((void*)&ether_header->src_addr[0], (void*)&g_ethernet_device.mac_addr[0], 6);
+		ether_header->ether_type = netswap16(ether_type);
+	}
 
 	return;
 
@@ -261,12 +284,160 @@ SOCKET* ksocket(uint32_t ip, uint32_t port, uint32_t protocol) {
 	sck->ip = ip;
 	sck->port = port;
 	sck->protocol = protocol;
+	sck->tcp_state = TCP_STATE_NONE;
 	sck->recv_buffer = NULL;
 
 	sck->sck_next = g_sck_list->sck_head;
 	g_sck_list->sck_head = sck;
 
 	return sck;
+
+}
+
+uint8_t kconnect(SOCKET* sck, uint32_t ip) {
+
+	disable_interrupts();
+	void* wrap_buf = kalloc(1);
+	enable_interrupts();
+
+	NET_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100};
+
+	if (sck->protocol == ETHERNET_TRANSPORT_PROTOCOL_TCP) {
+
+		// -- Send SYN
+
+		tcp_req(&pkt, sck->port, sck->port, ip, TCP_SYN, 0, 0);
+		tx_send(pkt.start, pkt.end - pkt.start);
+
+		// -- Wait for SYN-ACK
+
+		while (sck->recv_buffer == NULL) sleep(1);
+
+		TCP_HEADER* buf = (TCP_HEADER*)sck->recv_buffer;
+		if (!((buf->flags & TCP_SYN) && (buf->flags & TCP_ACK))) {
+			return 1;
+		}
+
+		uint32_t seq = netswap32(buf->seq_number);
+		uint32_t ack = netswap32(buf->ack_number);
+
+		disable_interrupts();
+		kfree(sck->recv_buffer, 1);
+		enable_interrupts();
+		sck->recv_buffer = NULL;
+
+		pkt.start = wrap_buf + 0x100;
+		pkt.end = wrap_buf + 0x100;
+
+		tcp_req(&pkt, sck->port, sck->port, ip, TCP_ACK, ack, seq + 1);
+		tx_send(pkt.start, pkt.end - pkt.start);
+
+		sck->seq_number = ack;
+		sck->ack_number = seq + 1;
+
+		return 0;
+
+	}
+	else {
+
+		return 1;
+
+	}
+
+}
+
+void kwrite(SOCKET* sck, void* buf, uint32_t buf_len, uint32_t ip) {
+
+	disable_interrupts();
+	void* wrap_buf = kalloc(1);
+	enable_interrupts();
+
+	memcpy(wrap_buf + 0x100, buf, buf_len);
+
+	NET_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100 + buf_len};
+
+	tcp_req(&pkt, sck->port, sck->port, ip, TCP_ACK | TCP_PSH, sck->seq_number, sck->ack_number);
+	tx_send(pkt.start, pkt.end - pkt.start);
+
+	// -- Wait for ACK
+	while (sck->recv_buffer == NULL) sleep(1);
+	TCP_HEADER* tcp_buf = (TCP_HEADER*)sck->recv_buffer;
+
+	sck->seq_number = netswap32(tcp_buf->ack_number);
+	sck->ack_number = netswap32(tcp_buf->seq_number);
+
+	disable_interrupts();
+	kfree(sck->recv_buffer, 1);
+	enable_interrupts();
+	sck->recv_buffer = NULL;
+
+	return;
+
+}
+
+uint32_t kread(SOCKET* sck, void* buf) {
+
+	// -- Wait for packet
+	while (sck->recv_buffer == NULL) sleep(1);
+
+	uint32_t return_buffer_size = sck->recv_size - sizeof(TCP_HEADER);
+
+	memcpy(buf, sck->recv_buffer + sizeof(TCP_HEADER), return_buffer_size);
+	disable_interrupts();
+	kfree(sck->recv_buffer, 1);
+	enable_interrupts();
+	sck->recv_buffer = NULL;
+
+	// -- Send ACK
+
+	disable_interrupts();
+	void* wrap_buf = kalloc(1);
+	enable_interrupts();
+
+	NET_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100};
+
+	sck->ack_number += sck->recv_size - sizeof(TCP_HEADER);
+
+	tcp_req(&pkt, sck->port, sck->port, sck->ip, TCP_ACK, sck->seq_number, sck->ack_number);
+	tx_send(pkt.start, pkt.end - pkt.start);
+
+	return return_buffer_size;
+
+}
+
+void kclose(SOCKET* sck) {
+
+	// -- Send FIN
+	disable_interrupts();
+	void* wrap_buf = kalloc(1);
+	enable_interrupts();
+
+	NET_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100};
+
+	tcp_req(&pkt, sck->port, sck->port, sck->ip, TCP_FIN | TCP_ACK, sck->seq_number, sck->ack_number);
+	tx_send(pkt.start, pkt.end - pkt.start);
+
+	// -- Wait for FIN-ACK
+	while (sck->recv_buffer == NULL) sleep(1);
+	TCP_HEADER* tcp_buf = (TCP_HEADER*)sck->recv_buffer;
+
+	sck->seq_number = netswap32(tcp_buf->ack_number);
+	sck->ack_number = netswap32(tcp_buf->seq_number) + 1;
+
+	disable_interrupts();
+	kfree(sck->recv_buffer, 1);
+	enable_interrupts();
+	sck->recv_buffer = NULL;
+
+	// Send ACK
+
+	pkt.start = wrap_buf + 0x100;
+	pkt.end = wrap_buf + 0x100;
+
+	tcp_req(&pkt, sck->port, sck->port, sck->ip, TCP_ACK, sck->seq_number, sck->ack_number);
+	tx_send(pkt.start, pkt.end - pkt.start);
+
+	return;
 
 }
 
@@ -337,8 +508,52 @@ uint32_t ether_decode(void* buf) {
 		return ipv4_decode(buf + sizeof(ETHER_HEADER));
 
 	}
+	else if (netswap16(ether_header->ether_type) == ETHER_TYPE_ARP) {
+
+		return arp_decode(buf + sizeof(ETHER_HEADER));
+
+	}
 
 	return 0;
+
+}
+
+void rar_read(size_t index) {
+
+	uint32_t ral = mmio_read(g_reg_base_addr, REG_RAL0 + 8 * index);
+	uint32_t rah = mmio_read(g_reg_base_addr, REG_RAH0 + 8 * index);
+
+	disable_interrupts();
+	print_string("RAR ");
+	print_byte(index);
+	print_string(":");
+	print_newline();
+	print_string("RAL: ");
+	print_dword(ral);
+	print_newline();
+	print_string("RAH: ");
+	print_dword(rah);
+	print_newline();
+	enable_interrupts();
+
+	return;
+
+}
+
+void rar_add(void* eth) {
+
+	uint8_t* eth_u8 = (uint8_t*)eth;
+	uint32_t ral = eth_u8[0] + (eth_u8[1] << 0x8) + (eth_u8[2] << 0x10) + (eth_u8[3] << 0x18); 
+	uint32_t rah = eth_u8[4] + (eth_u8[5] << 0x8);
+	rah |= 0x01 << 0x10;
+	rah |= 1 << 0x1F;
+
+	mmio_write(g_reg_base_addr, REG_RAL0 + 8 * g_rar_count, ral);
+	mmio_write(g_reg_base_addr, REG_RAH0 + 8 * g_rar_count, rah);
+
+	g_rar_count++;
+
+	return;
 
 }
 
@@ -396,7 +611,7 @@ void tx_send(void* buf, uint16_t len) {
 	g_ethernet_device.tx_tail = (tx_tail + 1) % TX_DESCRIPTOR_COUNT;
 	mmio_write(g_reg_base_addr, REG_TDT, g_ethernet_device.tx_tail);
 
-	sleep(5);
+	// sleep(5);
 
 	return;
 

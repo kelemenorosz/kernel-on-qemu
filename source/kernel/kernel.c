@@ -19,6 +19,7 @@
 #include "eflags.h"
 #include "serial.h"
 #include "dhcp.h"
+#include "string.h"
 
 const size_t VGA_WIDTH = 0x50;
 const size_t VGA_HEIGHT = 0x19;
@@ -70,9 +71,60 @@ void kernel_main() {
 
 	uint8_t ip_establised = dhcp_client();
 	if (!ip_establised) {
+		disable_interrupts();
 		print_string("IP address established.");
 		print_newline();
+		enable_interrupts();
 	}
+
+	SOCKET* sck = ksocket(0xC0A8016F, 4800, ETHERNET_TRANSPORT_PROTOCOL_TCP);
+
+	kconnect(sck, 0xC0A8016F);
+
+	disable_interrupts();
+	void* http_get_buf = kalloc(1);
+	enable_interrupts();
+
+	void* http_cpy_ptr = http_get_buf; 
+
+	memcpy(http_cpy_ptr, "GET / HTTP/1.1\r\n", strlen("GET / HTTP/1.1\r\n"));
+	http_cpy_ptr += strlen("GET / HTTP/1.1\r\n");
+	memcpy(http_cpy_ptr, "Host: 192.168.1.111\r\n", strlen("Host: 192.168.1.111\r\n"));
+	http_cpy_ptr += strlen("Host: 192.168.1.111\r\n");
+	memcpy(http_cpy_ptr, "User-Agent: kernel\r\n", strlen("User-Agent: kernel\r\n"));
+	http_cpy_ptr += strlen("User-Agent: kernel\r\n");
+	memcpy(http_cpy_ptr, "Accept: */*\r\n\r\n", strlen("Accept: */*\r\n\r\n"));
+	http_cpy_ptr += strlen("Accept: */*\r\n\r\n");
+
+	kwrite(sck, http_get_buf, http_cpy_ptr - http_get_buf, 0xC0A8016F);
+
+	disable_interrupts();
+	void* http_response = kalloc(1);
+	enable_interrupts();
+	memset(http_response, 0, 0x1000);
+
+	uint32_t http_response_len = kread(sck, http_response);
+
+	uint8_t* http_response_u8 = (uint8_t*)http_response;
+	void* http_response_body = NULL;
+	for (size_t i = 0; i < http_response_len - 3; ++i) {
+		if (http_response_u8[i] == '\r' && http_response_u8[i + 1] == '\n' &&
+			http_response_u8[i + 2] == '\r' && http_response_u8[i + 3] == '\n') {
+			http_response_body = (void*)(http_response_u8 + i + 4);
+		}
+	}
+
+	http_response_u8 = (uint8_t*)http_response_body;
+	while (*http_response_u8 != '\0') {
+		if (*http_response_u8 == 0x9 || *http_response_u8 == 0xA) *http_response_u8 = ' '; 
+		http_response_u8++;
+	}
+
+	disable_interrupts();
+	print_string(http_response_body);
+	enable_interrupts();
+
+	kclose(sck);
 
 	while (true) {
 

@@ -8,7 +8,7 @@
 	push dword 0x3
 	push word 0x2000
 	push word 0x0000
-	push word 0x30
+	push word 0x40
 	call read_sectors
 	add sp, 0x10
 

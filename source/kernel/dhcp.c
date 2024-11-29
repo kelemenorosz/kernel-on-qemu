@@ -10,6 +10,7 @@
 #include "netswap.h"
 #include "interrupt.h"
 #include "dhcp.h"
+#include "serial.h"
 
 typedef struct __attribute__((__packed__)) DHCP_HEADER {
 
@@ -60,6 +61,8 @@ uint32_t g_xid = 0;
 uint32_t g_dhcp_ip = 0;
 uint32_t g_dns_ip = 0;
 uint32_t g_this_ip = 0;
+uint32_t g_subnet_mask = 0;
+uint32_t g_this_ip_usable = 0;
 
 uint8_t dhcp_client() {
 
@@ -89,6 +92,12 @@ uint8_t dhcp_client() {
 	uint8_t is_dhcpoffer = 0;
 
 	if (dhcpoffer_header->op == BOOTP_BOOTREPLY && *(uint32_t*)dhcpoffer_options == netswap32(BOOTP_MAGIC_NUMBER)) {
+		
+		disable_interrupts();
+		serial_write_string("[DHCP] Received DHCP_OFFER.");
+		serial_write_newline();
+		enable_interrupts();
+
 		dhcpoffer_options += 4;
 		while (*dhcpoffer_options != BOOTP_OPTION_END) {
 				
@@ -104,6 +113,9 @@ uint8_t dhcp_client() {
 						g_dns_ip = *(uint32_t*)(dhcpoffer_options + 2);
 						g_dns_ip = netswap32(g_dns_ip);
 						break;
+					case BOOTP_OPTION_SUBNET_MASK:
+						g_subnet_mask = *(uint32_t*)(dhcpoffer_options + 2);
+						g_subnet_mask = netswap32(g_subnet_mask);
 					default:
 						break;
 				}
@@ -122,6 +134,11 @@ uint8_t dhcp_client() {
 	req_len = dhcp_req(req_buf, DHCPREQUEST);
 
 	// -- Send DHCP_REQUEST
+
+	disable_interrupts();
+	serial_write_string("[DHCP] Sending DHCP_REQUEST.");
+	serial_write_newline();
+	enable_interrupts();
 
 	ksend(sck, req_buf, req_len, BOOTP_PORT_SERVER, 0);	
 
@@ -160,6 +177,8 @@ uint8_t dhcp_client() {
 	enable_interrupts();
 
 	// -- TODO -- Close socket. There is not kclose()
+
+	if (is_ack) g_this_ip_usable = 1;
 
 	return !is_ack;
 

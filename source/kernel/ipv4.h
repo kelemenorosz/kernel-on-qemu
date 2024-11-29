@@ -4,6 +4,7 @@
 #include "ethernet.h"
 #include "packet.h"
 
+#define IPV4_PROTOCOL_TCP 6
 #define IPV4_PROTOCOL_UDP 17
 
 void ipv4_req(NET_PACKET* pkt, uint8_t protocol, uint32_t ip);
