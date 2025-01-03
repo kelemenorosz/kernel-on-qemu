@@ -28,13 +28,7 @@ typedef struct __attribute__((__packed__)) IPV4_HEADER {
 
 } IPV4_HEADER;
 
-extern uint32_t g_dhcp_ip;
-extern uint32_t g_dns_ip;
-extern uint32_t g_this_ip;
-extern uint32_t g_subnet_mask;
-extern uint32_t g_this_ip_usable;
-
-void ipv4_req(NET_PACKET* pkt, uint8_t protocol, uint32_t ip) {
+void ipv4_req(NETWORK_PACKET* pkt, NETWORK_INTERFACE* intf, uint8_t protocol, uint32_t ip) {
 
 	pkt->start -= sizeof(IPV4_HEADER);
 	IPV4_HEADER* ipv4_header = (IPV4_HEADER*)pkt->start;
@@ -47,7 +41,7 @@ void ipv4_req(NET_PACKET* pkt, uint8_t protocol, uint32_t ip) {
 	ipv4_header->ttl = 64;
 	ipv4_header->protocol = protocol;
 	ipv4_header->checksum = 0;
-	if (g_this_ip_usable) ipv4_header->src_addr = netswap32(g_this_ip);
+	if (intf->ip_addr != 0) ipv4_header->src_addr = netswap32(intf->ip_addr);
 	if (ip == 0) {
 		ipv4_header->dest_addr = 0xFFFFFFFF; // Broadcast
 	}
@@ -58,21 +52,13 @@ void ipv4_req(NET_PACKET* pkt, uint8_t protocol, uint32_t ip) {
 	uint16_t checksum = netchecksum(pkt->start, pkt->start + sizeof(IPV4_HEADER));
 	ipv4_header->checksum = netswap16(checksum);
 
-	if (ip == 0) {
-		ether_req(pkt, ETHER_TYPE_IPV4, 0);
-	} 
-	else if ((g_subnet_mask & ip) == (g_subnet_mask & g_dhcp_ip)) {
-		ether_req(pkt, ETHER_TYPE_IPV4, ip);  // If within the same network
-	}
-	else {
-		ether_req(pkt, ETHER_TYPE_IPV4, g_dhcp_ip); // If not on the same network 
-	}
+	ether_req(pkt, intf, ETHER_TYPE_IPV4, ip);
 
 	return;
 
 }
 
-uint32_t ipv4_decode(void* buf) {
+ERR_CODE ipv4_decode(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* msg_desc, void* buf) {
 
 	IPV4_HEADER* ipv4_header = (IPV4_HEADER*)buf;
 	uint8_t* addr = NULL;
@@ -96,15 +82,64 @@ uint32_t ipv4_decode(void* buf) {
 
 	if (ipv4_header->protocol == IPV4_PROTOCOL_UDP) {
 
-		return udp_decode(buf + sizeof(IPV4_HEADER));
+		return udp_decode(msg, msg_desc, buf + sizeof(IPV4_HEADER));
+ 	
+ 	}
 
-	}
-	else if (ipv4_header->protocol == IPV4_PROTOCOL_TCP) {
-
-		return tcp_decode(buf + sizeof(IPV4_HEADER), netswap16(ipv4_header->tol) - sizeof(IPV4_HEADER));
-
-	}
-
-	return 0;
+ 	return E_FAIL;
 
 }
+
+	// }
+	// else if (ipv4_header->protocol == IPV4_PROTOCOL_TCP) {
+
+	// 	return tcp_decode(buf + sizeof(IPV4_HEADER), netswap16(ipv4_header->tol) - sizeof(IPV4_HEADER));
+
+	// }
+
+	// if (ip == 0) {
+	// 	ether_req(pkt, ETHER_TYPE_IPV4, 0);
+	// } 
+	// else if ((g_subnet_mask & ip) == (g_subnet_mask & g_dhcp_ip)) {
+	// 	ether_req(pkt, ETHER_TYPE_IPV4, ip);  // If within the same network
+	// }
+	// else {
+	// 	ether_req(pkt, ETHER_TYPE_IPV4, g_dhcp_ip); // If not on the same network 
+	// }
+
+// uint32_t ipv4_decode(void* buf) {
+
+// 	IPV4_HEADER* ipv4_header = (IPV4_HEADER*)buf;
+// 	uint8_t* addr = NULL;
+
+// 	disable_interrupts();
+// 	serial_write_string("[RX_IPV4_HEADER] IPv4 header with destination IP address ");
+// 	addr = (uint8_t*)&ipv4_header->dest_addr;
+// 	for (uint8_t i = 0; i < 4; ++i) {
+// 		serial_write_byte(addr[i]);
+// 		if (i != 3) serial_write_string(".");
+// 	}
+// 	serial_write_newline();
+// 	serial_write_string("[RX_IPV4_HEADER] IPv4 header with source IP address ");
+// 	addr = (uint8_t*)&ipv4_header->src_addr;
+// 	for (uint8_t i = 0; i < 4; ++i) {
+// 		serial_write_byte(addr[i]);
+// 		if (i != 3) serial_write_string(".");
+// 	}
+// 	serial_write_newline();
+// 	enable_interrupts();
+
+// 	if (ipv4_header->protocol == IPV4_PROTOCOL_UDP) {
+
+// 		return udp_decode(buf + sizeof(IPV4_HEADER));
+
+// 	}
+// 	else if (ipv4_header->protocol == IPV4_PROTOCOL_TCP) {
+
+// 		return tcp_decode(buf + sizeof(IPV4_HEADER), netswap16(ipv4_header->tol) - sizeof(IPV4_HEADER));
+
+// 	}
+
+// 	return 0;
+
+// }

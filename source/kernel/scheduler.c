@@ -51,12 +51,16 @@ TASK_STATE* g_idle_task_state = NULL;
 uint32_t g_scheduler_running = 0x0;
 
 extern DELTA_QUEUE* g_delta_queue;
+LIST* g_processes;
 
 TASK_STATE* pop_task_queue();
 void push_task_queue(TASK_STATE* task_state);
 
 void idle_task();
 void register_idle_task(void(*task_func)(void));
+
+void serial_print_task_queue();
+void serial_print_delta_queue();
 
 /* 
 Function: 		scheduler_init
@@ -71,6 +75,30 @@ void scheduler_init() {
 	TASK_STATE* task_state = (TASK_STATE*)kalloc(1);
 	task_state->next = NULL;
 	task_state->is_blocking = 0x0;
+	task_state->process_string = "Main";
+	task_state->on_task_queue = 0x0;
+
+	// -- Allocate memory for socket list. Initialize list
+	
+	LIST* sockets = (LIST*)kalloc(1);
+	sockets->head = NULL;
+
+	// -- Add socket list to task state
+
+	task_state->sockets = sockets;
+
+	// -- Create processes list
+
+	g_processes = (LIST*)kalloc(1);
+	g_processes->head = NULL;
+
+	// -- Add process to processes list
+
+	disable_interrupts();
+	list_add(g_processes, task_state);
+	enable_interrupts();
+
+	// --
 
 	g_current_task_state = task_state;
 	g_task_state_list = task_state;
@@ -116,6 +144,8 @@ void register_idle_task(void(*task_func)(void)) {
 
 	task_state->esp = (uint32_t)process_frame;
 	task_state->is_blocking = 0x0;
+	task_state->process_string = "Idle";
+	task_state->on_task_queue = 0x0;
 
 	g_idle_task_state = task_state; 
 
@@ -130,13 +160,24 @@ Description: 	Creates a task state information structure for a new task.
 				Adds task state information to 'g_task_state_list'.
 Return:			NONE
 */
-void task_create(void(*task_func)(void)){
+void task_create(void(*task_func)(void), char* process_string) {
 
 	disable_interrupts();
 	TASK_STATE* task_state = (TASK_STATE*)kalloc(1);
 	void* stack_bottom = kalloc(0x10); 
 	void* stack_top = stack_bottom + 0x10 * 0x1000; 
 	enable_interrupts();
+
+	// -- Allocate memory for socket list. Initialize list
+	
+	disable_interrupts();
+	LIST* sockets = (LIST*)kalloc(1);
+	enable_interrupts();
+	sockets->head = NULL;
+
+	// -- Add socket list to task state
+
+	task_state->sockets = sockets;
 
 	PROCESS_FRAME* process_frame = stack_top - sizeof(PROCESS_FRAME);
 	process_frame->eflags = 0x202; // This should be set with a bit more thought. For now bits 9 and 1 are set.
@@ -153,9 +194,76 @@ void task_create(void(*task_func)(void)){
 
 	task_state->esp = (uint32_t)process_frame;
 	task_state->is_blocking = 0x0;
+	task_state->process_string = process_string;
+	task_state->on_task_queue = 0x0;
 
 	task_state->next = g_task_state_list;
 	g_task_state_list = task_state;
+
+	// -- Add process to processes list
+
+	disable_interrupts();
+	list_add(g_processes, task_state);
+	enable_interrupts();
+
+	// --
+
+	disable_interrupts();
+	push_task_queue(task_state);
+	enable_interrupts();
+
+	return;
+
+}
+
+/* 
+Function: 		task_create_param
+Description: 	Creates a task state information structure for a new task.
+				Allocates stack space of 16 pages.
+				Adds task state information to 'g_task_state_list'.
+				Identical to task_create, except that it inserts a parameter to be passed to the process.
+Return:			NONE
+*/
+void task_create_param(void(*task_func)(PPARAM), char* process_string, uint32_t param) {
+
+	disable_interrupts();
+	TASK_STATE* task_state = (TASK_STATE*)kalloc(1);
+	void* stack_bottom = kalloc(0x10); 
+	void* stack_top = stack_bottom + 0x10 * 0x1000; 
+	enable_interrupts();
+
+	PROCESS_FRAME* process_frame = stack_top - sizeof(PROCESS_FRAME) - 0x8; // Take 4 more bytes off, to account for the parameter value
+	process_frame->eflags = 0x202; // This should be set with a bit more thought. For now bits 9 and 1 are set.
+	process_frame->cs = 0x08;
+	process_frame->eip = (uint32_t)task_func;
+	process_frame->ebp0 = 0x0; // This can be 0 - could be something else
+	process_frame->eax = 0x0;
+	process_frame->ebx = 0x0;
+	process_frame->ecx = 0x0;
+	process_frame->edx = 0x0;
+	process_frame->esi = 0x0;
+	process_frame->edi = 0x0;
+	process_frame->ebp1 = (uint32_t)&process_frame->ebp0; // This has to be the address of ebp1. Will be moved into esp, prior to popping ebp0 off the stack
+
+	// -- Insert parameter
+	uint32_t* parameter = stack_top - 0x4;
+	*parameter = param;
+
+	task_state->esp = (uint32_t)process_frame;
+	task_state->is_blocking = 0x0;
+	task_state->process_string = process_string;
+	task_state->on_task_queue = 0x0;
+
+	task_state->next = g_task_state_list;
+	g_task_state_list = task_state;
+
+	// -- Add process to processes list
+
+	disable_interrupts();
+	list_add(g_processes, task_state);
+	enable_interrupts();
+
+	// --
 
 	disable_interrupts();
 	push_task_queue(task_state);
@@ -183,8 +291,14 @@ TASK_STATE* pop_task_queue() {
 		g_task_queue->last = NULL;
 		TASK_STATE* task_state = tq_element->task_state;
 
+		task_state->on_task_queue = 0x0;
+
 		serial_write_string("[INFO] Popping process from TASK_QUEUE with ESP 0x");
 		serial_write_dword(task_state->esp);
+		serial_write_string(". TASK_STATE address 0x");
+		serial_write_dword((uint32_t)task_state);
+		serial_write_string(". Process string: ");
+		serial_write_string(task_state->process_string);
 		serial_write_newline();
 
 		kfree(tq_element, 1);
@@ -196,8 +310,14 @@ TASK_STATE* pop_task_queue() {
 		g_task_queue->first = g_task_queue->first->next;
 		TASK_STATE* task_state = tq_element->task_state;
 
+		task_state->on_task_queue = 0x0;
+
 		serial_write_string("[INFO] Popping process from TASK_QUEUE with ESP 0x");
 		serial_write_dword(task_state->esp);
+		serial_write_string(". TASK_STATE address 0x");
+		serial_write_dword((uint32_t)task_state);
+		serial_write_string(". Process string: ");
+		serial_write_string(task_state->process_string);
 		serial_write_newline();
 
 		kfree(tq_element, 1);
@@ -216,6 +336,10 @@ void push_task_queue(TASK_STATE* task_state) {
 
 	serial_write_string("[INFO] Pushing process onto TASK_QUEUE with ESP 0x");
 	serial_write_dword(task_state->esp);
+	serial_write_string(". TASK_STATE address 0x");
+	serial_write_dword((uint32_t)task_state);
+	serial_write_string(". Process string: ");
+	serial_write_string(task_state->process_string);
 	serial_write_newline();
 
 	TASK_QUEUE_ELEMENT* tq_element = kalloc(1);
@@ -233,6 +357,8 @@ void push_task_queue(TASK_STATE* task_state) {
 		g_task_queue->last = tq_element;
 
 	}
+
+	task_state->on_task_queue = 0x1;
 
 	return;
 
@@ -256,6 +382,11 @@ void scheduler() {
 	// else {
 	// 	g_next_task_state = g_task_state_list;
 	// }
+
+	serial_write_string("[SCHEDULER_START]");
+	serial_write_newline();
+	serial_print_task_queue();
+	serial_print_delta_queue();	
 
 	// Select next running process
 	while (g_task_queue->first != NULL) {
@@ -283,13 +414,23 @@ void scheduler() {
 	while (dq_element != NULL && dq_element->ticks_to_wakeup == 0) {
 		serial_write_string("[INFO] Popping of process from DELTA_QUEUE with ESP 0x");
 		serial_write_dword(dq_element->task_state->esp);
+		serial_write_string(". Process string: ");
+		serial_write_string(dq_element->task_state->process_string);
 		serial_write_newline();
-		dq_element->task_state->is_blocking = 0x0;
-		push_task_queue(dq_element->task_state);
+		dq_element->task_state->is_blocking = 0x0; 
+		if (!dq_element->task_state->on_task_queue) push_task_queue(dq_element->task_state);
 		g_delta_queue->first = dq_element->next;
 		kfree(dq_element, 1);
 		dq_element = g_delta_queue->first;
 	}
+
+	serial_write_string("[SCHEDULER_END]");
+	serial_write_newline();
+	serial_write_string("[CURRENT_TASK_STATE] Running process string: ");
+	serial_write_string(g_next_task_state->process_string);
+	serial_write_newline();
+	serial_print_task_queue();
+	serial_print_delta_queue();	
 
 	return;
 
@@ -353,4 +494,40 @@ void idle_task() {
 
 }
 
+void serial_print_task_queue() {
 
+	serial_write_string("[TASK_QUEUE_PRINT]");
+	serial_write_newline();
+
+	TASK_QUEUE_ELEMENT* tq_element = g_task_queue->first;
+	while (tq_element != NULL) {
+
+		serial_write_string("[TASK_QUEUE_PRINT_ELEMENT] Task queue element. Process string: ");
+		serial_write_string(tq_element->task_state->process_string);
+		serial_write_newline();
+
+		tq_element = tq_element->next;
+	}
+
+	return;
+
+}
+
+void serial_print_delta_queue() {
+
+	serial_write_string("[DELTA_QUEUE_PRINT]");
+	serial_write_newline();
+
+	DELTA_QUEUE_ELEMENT* dq_element = g_delta_queue->first;
+	while (dq_element != NULL) {
+
+		serial_write_string("[DELTA_QUEUE_PRINT_ELEMENT] Delta queue element. Process string: ");
+		serial_write_string(dq_element->task_state->process_string);
+		serial_write_newline();
+
+		dq_element = dq_element->next;
+	}
+
+	return;
+
+}

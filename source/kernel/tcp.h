@@ -22,7 +22,7 @@ typedef struct __attribute__((__packed__)) TCP_HEADER {
 
 } TCP_HEADER;
 
-void tcp_req(NET_PACKET* pkt, uint32_t send_port, uint32_t recv_port, uint32_t ip, uint8_t flags, uint32_t seq, uint32_t ack);
-uint8_t tcp_decode(void* buf, size_t size);
+// void tcp_req(NET_PACKET* pkt, uint32_t send_port, uint32_t recv_port, uint32_t ip, uint8_t flags, uint32_t seq, uint32_t ack);
+// uint8_t tcp_decode(void* buf, size_t size);
 
 #endif /* TCP_H */

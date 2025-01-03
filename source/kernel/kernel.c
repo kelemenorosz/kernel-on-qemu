@@ -18,8 +18,11 @@
 #include "scheduler.h"
 #include "eflags.h"
 #include "serial.h"
-#include "dhcp.h"
 #include "string.h"
+#include "networking.h"
+#include "err.h"
+#include "socket.h"
+#include "dhcp_client.h"
 
 const size_t VGA_WIDTH = 0x50;
 const size_t VGA_HEIGHT = 0x19;
@@ -30,7 +33,7 @@ uint16_t* const g_VGABuffer = (uint16_t*)0xB8000;
 
 uint32_t* const g_memoryMapPtr = (uint32_t*)0x60000;
 
-void second_task();
+void second_task(PPARAM value);
 void third_task();
 
 void kernel_main() {
@@ -67,64 +70,85 @@ void kernel_main() {
 	print_newline();
 	enable_interrupts();
 
-	ethernet_init(&ethernet_pci_token);
-
-	uint8_t ip_establised = dhcp_client();
-	if (!ip_establised) {
-		disable_interrupts();
-		print_string("IP address established.");
-		print_newline();
-		enable_interrupts();
-	}
-
-	SOCKET* sck = ksocket(0xC0A8016F, 4800, ETHERNET_TRANSPORT_PROTOCOL_TCP);
-
-	kconnect(sck, 0xC0A8016F);
-
+	networking_init();
+	ERR_CODE error_code = networking_init_device(&ethernet_pci_token);
 	disable_interrupts();
-	void* http_get_buf = kalloc(1);
+	print_string("networking_init_device error code: ");
+	print_dword((uint32_t)error_code);
+	print_newline();
 	enable_interrupts();
 
-	void* http_cpy_ptr = http_get_buf; 
+	// -- Get network interface
+	NETWORK_INTERFACE* net_intf = get_network_interface(0);
 
-	memcpy(http_cpy_ptr, "GET / HTTP/1.1\r\n", strlen("GET / HTTP/1.1\r\n"));
-	http_cpy_ptr += strlen("GET / HTTP/1.1\r\n");
-	memcpy(http_cpy_ptr, "Host: 192.168.1.111\r\n", strlen("Host: 192.168.1.111\r\n"));
-	http_cpy_ptr += strlen("Host: 192.168.1.111\r\n");
-	memcpy(http_cpy_ptr, "User-Agent: kernel\r\n", strlen("User-Agent: kernel\r\n"));
-	http_cpy_ptr += strlen("User-Agent: kernel\r\n");
-	memcpy(http_cpy_ptr, "Accept: */*\r\n\r\n", strlen("Accept: */*\r\n\r\n"));
-	http_cpy_ptr += strlen("Accept: */*\r\n\r\n");
-
-	kwrite(sck, http_get_buf, http_cpy_ptr - http_get_buf, 0xC0A8016F);
-
+	// -- DHCP client
+	error_code = dhcp_client(net_intf);
 	disable_interrupts();
-	void* http_response = kalloc(1);
-	enable_interrupts();
-	memset(http_response, 0, 0x1000);
-
-	uint32_t http_response_len = kread(sck, http_response);
-
-	uint8_t* http_response_u8 = (uint8_t*)http_response;
-	void* http_response_body = NULL;
-	for (size_t i = 0; i < http_response_len - 3; ++i) {
-		if (http_response_u8[i] == '\r' && http_response_u8[i + 1] == '\n' &&
-			http_response_u8[i + 2] == '\r' && http_response_u8[i + 3] == '\n') {
-			http_response_body = (void*)(http_response_u8 + i + 4);
-		}
-	}
-
-	http_response_u8 = (uint8_t*)http_response_body;
-	while (*http_response_u8 != '\0') {
-		if (*http_response_u8 == 0x9 || *http_response_u8 == 0xA) *http_response_u8 = ' '; 
-		http_response_u8++;
-	}
-
-	disable_interrupts();
-	print_string(http_response_body);
+	print_string("dhcp_client error code: ");
+	print_dword((uint32_t)error_code);
+	print_newline();
 	enable_interrupts();
 
-	kclose(sck);
+	// ethernet_init(&ethernet_pci_token);
+
+	// uint8_t ip_establised = dhcp_client();
+	// if (!ip_establised) {
+	// 	disable_interrupts();
+	// 	print_string("IP address established.");
+	// 	print_newline();
+	// 	enable_interrupts();
+	// }
+
+	// SOCKET* sck = ksocket(0xC0A8016F, 4800, ETHERNET_TRANSPORT_PROTOCOL_TCP);
+
+	// kconnect(sck, 0xC0A8016F);
+
+	// disable_interrupts();
+	// void* http_get_buf = kalloc(1);
+	// enable_interrupts();
+
+	// void* http_cpy_ptr = http_get_buf; 
+
+	// memcpy(http_cpy_ptr, "GET / HTTP/1.1\r\n", strlen("GET / HTTP/1.1\r\n"));
+	// http_cpy_ptr += strlen("GET / HTTP/1.1\r\n");
+	// memcpy(http_cpy_ptr, "Host: 192.168.1.111\r\n", strlen("Host: 192.168.1.111\r\n"));
+	// http_cpy_ptr += strlen("Host: 192.168.1.111\r\n");
+	// memcpy(http_cpy_ptr, "User-Agent: kernel\r\n", strlen("User-Agent: kernel\r\n"));
+	// http_cpy_ptr += strlen("User-Agent: kernel\r\n");
+	// memcpy(http_cpy_ptr, "Accept: */*\r\n\r\n", strlen("Accept: */*\r\n\r\n"));
+	// http_cpy_ptr += strlen("Accept: */*\r\n\r\n");
+
+	// kwrite(sck, http_get_buf, http_cpy_ptr - http_get_buf, 0xC0A8016F);
+
+	// disable_interrupts();
+	// void* http_response = kalloc(1);
+	// enable_interrupts();
+	// memset(http_response, 0, 0x1000);
+
+	// uint32_t http_response_len = kread(sck, http_response);
+
+	// uint8_t* http_response_u8 = (uint8_t*)http_response;
+	// void* http_response_body = NULL;
+	// for (size_t i = 0; i < http_response_len - 3; ++i) {
+	// 	if (http_response_u8[i] == '\r' && http_response_u8[i + 1] == '\n' &&
+	// 		http_response_u8[i + 2] == '\r' && http_response_u8[i + 3] == '\n') {
+	// 		http_response_body = (void*)(http_response_u8 + i + 4);
+	// 	}
+	// }
+
+	// http_response_u8 = (uint8_t*)http_response_body;
+	// while (*http_response_u8 != '\0') {
+	// 	if (*http_response_u8 == 0x9 || *http_response_u8 == 0xA) *http_response_u8 = ' '; 
+	// 	http_response_u8++;
+	// }
+
+	// disable_interrupts();
+	// print_string(http_response_body);
+	// enable_interrupts();
+
+	// kclose(sck);
+
+	// task_create_param(second_task, 0xE2867A);
 
 	while (true) {
 
@@ -137,12 +161,15 @@ void kernel_main() {
 
 }
 
-void second_task() {
+void second_task(PPARAM value) {
+
+	uint32_t value_u32 = (uint32_t)value;
 
 	while (true) {
 
 		disable_interrupts();
-		print_string("Second task!");
+		print_string("Second task! ");
+		print_dword(value_u32);
 		print_newline();
 		enable_interrupts();
 

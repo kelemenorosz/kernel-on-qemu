@@ -13,6 +13,16 @@ interrupt_wrapper_PIT:
 	push %ecx
 	push %edx
 
+	call disable_interrupts	
+
+	pop %edx
+	pop %ecx
+	pop %eax
+
+	push %eax
+	push %ecx
+	push %edx
+
 	call interrupt_function_PIT
 
 	pop %edx
@@ -63,6 +73,8 @@ interrupt_wrapper_PIT:
 
 	interrupt_wrapper_PIT_exit:
 
+	movl $0, (g_interrupt_disable_counter)
+
 	mov %ebp, %esp 
 	pop %ebp
 	iret
@@ -71,6 +83,16 @@ interrupt_wrapper_software_blocking:
 
 	push %ebp
 	mov %esp, %ebp
+
+	push %eax
+	push %ecx
+	push %edx
+
+	call disable_interrupts	
+
+	pop %edx
+	pop %ecx
+	pop %eax
 
 	push %eax
 	push %ecx
@@ -106,6 +128,8 @@ interrupt_wrapper_software_blocking:
 	pop %ecx
 	pop %ebx
 	pop %eax	
+
+	movl $0, (g_interrupt_disable_counter)
 
 	mov %ebp, %esp 
 	pop %ebp

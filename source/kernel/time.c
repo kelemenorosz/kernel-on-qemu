@@ -77,10 +77,14 @@ void sleep(uint32_t ticks_to_sleep) {
 
 	serial_write_string("[INFO] Pushing process onto DELTA_QUEUE with ESP 0x");
 	serial_write_dword(g_current_task_state->esp);
+	serial_write_string(". Process string: ");
+	serial_write_string(g_current_task_state->process_string);
 	serial_write_string(" for 0x");
 	serial_write_dword(ticks_to_sleep);
 	serial_write_string(" ticks");
 	serial_write_newline();
+
+	// -- TODO -- Make sure there have been no previous calls to disable_interrupts() 
 
 	enable_interrupts();
 

@@ -20,9 +20,7 @@ typedef struct __attribute__((__packed__)) UDP_HEADER {
 
 } UDP_HEADER;
 
-extern SOCKET_LIST* g_sck_list;
-
-void udp_req(NET_PACKET* pkt, uint32_t send_port, uint32_t recv_port, uint32_t ip) {
+void udp_req(NETWORK_PACKET* pkt, NETWORK_INTERFACE* intf, uint32_t send_port, uint32_t recv_port, uint32_t ip) {
 
 	pkt->start -= sizeof(UDP_HEADER);
 	UDP_HEADER* udp_header = (UDP_HEADER*)(pkt->start);
@@ -30,14 +28,14 @@ void udp_req(NET_PACKET* pkt, uint32_t send_port, uint32_t recv_port, uint32_t i
 	udp_header->dest_port = netswap16(send_port);
 	udp_header->length = netswap16(pkt->end - pkt->start);
 
-	ipv4_req(pkt, IPV4_PROTOCOL_UDP, ip);
+	ipv4_req(pkt, intf, IPV4_PROTOCOL_UDP, ip);
 
 	return;
 
 }
 
-uint32_t udp_decode(void* buf) {
-	
+ERR_CODE udp_decode(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* msg_desc, void* buf) {
+
 	UDP_HEADER* udp_header = (UDP_HEADER*)buf;
 
 	disable_interrupts();
@@ -49,29 +47,56 @@ uint32_t udp_decode(void* buf) {
 	serial_write_newline();
 	enable_interrupts();
 
-	uint16_t dst_port = netswap16(udp_header->dest_port);
+	uint16_t dest_port = netswap16(udp_header->dest_port);
+	uint16_t src_port = netswap16(udp_header->src_port);
 
-	SOCKET* sck = g_sck_list->sck_head;
+	memcpy(msg->buf, buf + sizeof(UDP_HEADER), netswap16(udp_header->length));
+	msg->len = netswap16(udp_header->length);
 
-	while (sck != NULL && sck->port != dst_port) sck = sck->sck_next;
+	msg_desc->src_port = src_port;
+	msg_desc->dest_port = dest_port;
+	msg_desc->protocol = NETWORK_MESSAGE_PROTOCOL_UDP;
 
-	if (sck == NULL) {
-		return 0;
-	}
-	else if (sck->recv_buffer != NULL) {
-		return 1;
-	}
-	else {
-
-		disable_interrupts();
-		void* recv_buffer = kalloc(1);
-		enable_interrupts();
-		memset(recv_buffer, 0, 0x1000);
-		memcpy(recv_buffer, buf + sizeof(UDP_HEADER), netswap16(udp_header->length) - sizeof(UDP_HEADER));
-
-		sck->recv_buffer = recv_buffer;
-		return 0;
-
-	}
+	return E_OK;
 
 }
+
+// uint32_t udp_decode(void* buf) {
+	
+// 	UDP_HEADER* udp_header = (UDP_HEADER*)buf;
+
+// 	disable_interrupts();
+// 	serial_write_string("[RX_UDP_HEADER] UDP header with destination port 0x");
+// 	serial_write_word(netswap16(udp_header->dest_port));
+// 	serial_write_newline();
+// 	serial_write_string("[RX_UDP_HEADER] UDP header with source port 0x");
+// 	serial_write_word(netswap16(udp_header->src_port));
+// 	serial_write_newline();
+// 	enable_interrupts();
+
+// 	uint16_t dst_port = netswap16(udp_header->dest_port);
+
+// 	// SOCKET* sck = g_sck_list->sck_head;
+
+// 	// while (sck != NULL && sck->port != dst_port) sck = sck->sck_next;
+
+// 	// if (sck == NULL) {
+// 	// 	return 0;
+// 	// }
+// 	// else if (sck->recv_buffer != NULL) {
+// 	// 	return 1;
+// 	// }
+// 	// else {
+
+// 	// 	disable_interrupts();
+// 	// 	void* recv_buffer = kalloc(1);
+// 	// 	enable_interrupts();
+// 	// 	memset(recv_buffer, 0, 0x1000);
+// 	// 	memcpy(recv_buffer, buf + sizeof(UDP_HEADER), netswap16(udp_header->length) - sizeof(UDP_HEADER));
+
+// 	// 	sck->recv_buffer = recv_buffer;
+// 	// 	return 0;
+
+// 	// }
+
+// }

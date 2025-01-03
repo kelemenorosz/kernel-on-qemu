@@ -17,10 +17,15 @@ typedef struct __attribute__((__packed__)) IDT_ENTRY {
 
 IDT_ENTRY* const g_IDTPtr = (IDT_ENTRY*)0x70000; 
 
+uint32_t g_interrupt_disable_counter = 0x0;
+
 void load_IDTR();
 void PIC_init();
 extern void interrupt_wrapper_spurious();
 void interrupt_function_spurious();
+
+void __attribute__((optimize("O0"))) enable_interrupts_asm_wrapper();
+void __attribute__((optimize("O0"))) disable_interrupts_asm_wrapper();
 
 /*
 Function: 		interrupt_init
@@ -184,10 +189,41 @@ void register_software_interrupt(void(*interrupt_function)(void), size_t line) {
 /*
 Function: 		enable_interrupts
 Description: 	Enables interrupts.
+				Decrements interrupt disable counter.
+				Interrupts get enabled only when the disable counter reaches 0.
+Return:			NONE
+*/
+void enable_interrupts() {
+
+	if (g_interrupt_disable_counter > 0) g_interrupt_disable_counter--;
+	if (g_interrupt_disable_counter == 0) enable_interrupts_asm_wrapper();
+	
+	return;
+
+}
+
+/*
+Function: 		disable_interrupts
+Description: 	Disables interrupts.
+				Increments interrupt disable counter.
+Return:			NONE
+*/
+void disable_interrupts() {
+
+	disable_interrupts_asm_wrapper();
+	g_interrupt_disable_counter++;
+
+	return;
+
+}
+
+/*
+Function: 		enable_interrupts_asm_wrapper
+Description: 	Enables interrupts.
 				Instruction wrapper for STI.
 Return:			NONE
 */
-void __attribute__((optimize("O0"))) enable_interrupts() {
+void __attribute__((optimize("O0"))) enable_interrupts_asm_wrapper() {
 
 	asm __volatile__ ("sti");
 
@@ -196,12 +232,12 @@ void __attribute__((optimize("O0"))) enable_interrupts() {
 }
 
 /*
-Function: 		disable_interrupts
+Function: 		disable_interrupts_asm_wrapper
 Description: 	Disables interrupts.
 				Instruction wrapper for CLI.
 Return:			NONE
 */
-void __attribute__((optimize("O0"))) disable_interrupts() {
+void __attribute__((optimize("O0"))) disable_interrupts_asm_wrapper() {
 
 	asm __volatile__ ("cli");
 
