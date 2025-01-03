@@ -2,7 +2,6 @@ build/
 *.asm.bin
 bootloader_large
 /bootloader
-setup_ethernet.sh
 kernel.dump
 serial.log
 /kernel
