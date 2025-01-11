@@ -37,6 +37,7 @@ uint32_t dhcp_req(NETWORK_INTERFACE* intf, void* buf, uint32_t req, uint32_t ip_
 		*dhcp_options++ = 1;
 		*dhcp_options++ = req;
 
+		// TODO: Remove this in the future
 		*dhcp_options++ = BOOTP_OPTION_REQESTED_IP_ADDRESS;
 		*dhcp_options++ = 4;
 		*dhcp_options++ = 192;

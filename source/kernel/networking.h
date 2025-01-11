@@ -45,6 +45,6 @@ void networking_enum_interfaces();
 NETWORK_INTERFACE* get_network_interface(uint32_t index);
 
 void networking_tx_poll();
-void networking_rx_sort(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* desc);
+void networking_rx_sort(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* desc, void* device, void(*rar_add)(void* device, void* eth_addr));
 
 #endif /* NETWORKING_H */

@@ -2,6 +2,7 @@
 #define SCHEDULER_H
 
 #include "list.h"
+#include "socket.h"
 
 typedef struct __attribute__((__packed__)) TASK_STATE {
 
@@ -10,6 +11,7 @@ typedef struct __attribute__((__packed__)) TASK_STATE {
 	uint32_t on_task_queue;
 	char* process_string;
 	LIST* sockets;
+	SOCKET* arp_sck;
 	struct TASK_STATE* next;
 
 } TASK_STATE;

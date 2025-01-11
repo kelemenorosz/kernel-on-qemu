@@ -100,6 +100,8 @@ typedef struct __attribute__((__packed__)) INTEL_8254XX_DEVICE {
 	INTEL_8254XX_TX_DESC* txdl;
 	uint32_t tx_tail;
 	uint32_t reg_base_addr;
+	uint32_t rar_count;
+	void(*rar_add)(void* device, void* eth_addr);
 
 } INTEL_8254XX_DEVICE;
 
@@ -108,6 +110,7 @@ void intel_8254xx_rx_init(INTEL_8254XX_DEVICE* device);
 void intel_8254xx_tx_init(INTEL_8254XX_DEVICE* device);
 void intel_8254xx_rx_poll(PPARAM device);
 void intel_8254xx_tx_send(void* device, NETWORK_PACKET* pkt);
+void intel_8254xx_rar_add(void* device, void* eth_addr);
 
 ERR_CODE intel_8254xx_init(PCI_ENUM_TOKEN* pci_token) {
 
@@ -163,6 +166,11 @@ ERR_CODE intel_8254xx_init(PCI_ENUM_TOKEN* pci_token) {
 
 	intel_8254xx_rx_init(device);
 	intel_8254xx_tx_init(device);
+
+	// -- Set rar_add function to device
+
+	device->rar_count = 1;
+	device->rar_add = intel_8254xx_rar_add;
 
 	// -- Start polling process
 
@@ -311,7 +319,7 @@ void intel_8254xx_rx_poll(PPARAM device) {
 				NETWORK_MESSAGE_DESC msg_desc = {};
 
 				ERR_CODE error_code = ether_decode(msg, &msg_desc, (void*)device_ptr->rxdl[i].addr_low);
-				if (error_code == E_OK) networking_rx_sort(msg, &msg_desc);
+				if (error_code == E_OK) networking_rx_sort(msg, &msg_desc, (void*)device, device_ptr->rar_add);
 				
 				device_ptr->rxdl[i].status = 0;
 
@@ -345,3 +353,21 @@ void intel_8254xx_tx_send(void* device, NETWORK_PACKET* pkt) {
 
 }
 
+void intel_8254xx_rar_add(void* device, void* eth_addr) {
+
+	INTEL_8254XX_DEVICE* device_ptr = (INTEL_8254XX_DEVICE*)device;
+
+	uint8_t* eth_u8 = (uint8_t*)eth_addr;
+	uint32_t ral = eth_u8[0] + (eth_u8[1] << 0x8) + (eth_u8[2] << 0x10) + (eth_u8[3] << 0x18); 
+	uint32_t rah = eth_u8[4] + (eth_u8[5] << 0x8);
+	rah |= 0x01 << 0x10;
+	rah |= 1 << 0x1F;
+
+	mmio_write(device_ptr->reg_base_addr, REG_RAL0 + 8 * device_ptr->rar_count, ral);
+	mmio_write(device_ptr->reg_base_addr, REG_RAH0 + 8 * device_ptr->rar_count, rah);
+
+	device_ptr->rar_count++;
+
+	return;
+
+}

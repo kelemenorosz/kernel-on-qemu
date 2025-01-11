@@ -10,8 +10,33 @@
 #include "queue.h"
 #include "time.h"
 #include "serial.h"
+#include "print.h"
+#include "arp.h"
 
 SOCKET* ksocket(NETWORK_INTERFACE* intf, uint32_t port_in) {
+
+	// -- Check for and create ARP socket
+
+	if (g_current_task_state->arp_sck == NULL) {
+
+		disable_interrupts();
+		g_current_task_state->arp_sck = (SOCKET*)kalloc(1);
+		enable_interrupts();
+
+		memset(g_current_task_state->arp_sck, 0, sizeof(SOCKET));
+		g_current_task_state->arp_sck->intf = intf;
+		
+		disable_interrupts();
+		g_current_task_state->arp_sck->message_queue_in = (QUEUE*)kalloc(1);
+		g_current_task_state->arp_sck->message_queue_out = (QUEUE*)kalloc(1);
+		enable_interrupts();
+
+		g_current_task_state->arp_sck->message_queue_in->head = NULL;
+		g_current_task_state->arp_sck->message_queue_in->tail = NULL;
+		g_current_task_state->arp_sck->message_queue_out->head = NULL;
+		g_current_task_state->arp_sck->message_queue_out->tail = NULL;
+
+	}
 
 	// -- Allocate memory for socket
 
@@ -21,6 +46,8 @@ SOCKET* ksocket(NETWORK_INTERFACE* intf, uint32_t port_in) {
 	memset(sck, 0, sizeof(SOCKET));
 	sck->port_in = port_in;
 	sck->intf = intf;
+	sck->message_queue_in = NULL;
+	sck->message_queue_out = NULL;
 
 	// -- Add socket to process' socket list
 
@@ -44,7 +71,44 @@ ERR_CODE kconnect(SOCKET* sck, uint32_t ip_out, uint32_t port_out, uint32_t prot
 
 	if (protocol == SOCKET_PROTOCOL_TCP && sck->intf->ip_addr == 0) return E_FAIL;
 	if (protocol == SOCKET_PROTOCOL_TCP) {
-		return E_FAIL;
+		
+		// -- ARP if not in cache
+
+		if ((sck->intf->subnet_mask & sck->intf->ip_addr) == (sck->intf->subnet_mask & ip_out)) {
+
+			// -- 'ip_out' is on the subnet
+
+			ERR_CODE error_code = arp_lookup(ip_out, NULL);
+
+			// -- If ether address is not in cache
+			// TODO: error_code == E_FAIL or error_code == E_OK may fail. This may be because of enum bullshit
+
+			if (error_code == E_FAIL)  {
+
+				disable_interrupts();
+				void* buf = kalloc(1);
+				enable_interrupts();
+
+				uint32_t buf_len = arp_req(sck->intf, buf, ip_out);
+				kwrite(g_current_task_state->arp_sck, buf, buf_len);
+
+				disable_interrupts();
+				kfree(buf, 1);
+				enable_interrupts();
+
+				while (arp_lookup(ip_out, NULL) == E_FAIL) sleep(1);
+
+				disable_interrupts();
+				print_string("ip_out is in ARP cache");
+				print_newline();
+				enable_interrupts();
+
+			}
+
+		}
+
+		return E_OK;
+	
 	}
 
 	// -- UDP
@@ -96,7 +160,7 @@ ERR_CODE kwrite(SOCKET* sck, void* buf, size_t len) {
 	NETWORK_MESSAGE* net_msg = (NETWORK_MESSAGE*)kalloc(1); 
 	enable_interrupts();
 	memcpy(copy_buf, buf, 0x1000);
-	net_msg->buf = buf;
+	net_msg->buf = copy_buf;
 	net_msg->len = len;
 
 	disable_interrupts();

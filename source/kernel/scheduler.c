@@ -146,6 +146,7 @@ void register_idle_task(void(*task_func)(void)) {
 	task_state->is_blocking = 0x0;
 	task_state->process_string = "Idle";
 	task_state->on_task_queue = 0x0;
+	task_state->arp_sck = NULL;
 
 	g_idle_task_state = task_state; 
 
@@ -178,6 +179,12 @@ void task_create(void(*task_func)(void), char* process_string) {
 	// -- Add socket list to task state
 
 	task_state->sockets = sockets;
+
+	// -- Set arp_sck to NULL
+
+	task_state->arp_sck = NULL;
+
+	// -- Setup process frame
 
 	PROCESS_FRAME* process_frame = stack_top - sizeof(PROCESS_FRAME);
 	process_frame->eflags = 0x202; // This should be set with a bit more thought. For now bits 9 and 1 are set.
@@ -231,6 +238,21 @@ void task_create_param(void(*task_func)(PPARAM), char* process_string, uint32_t 
 	void* stack_bottom = kalloc(0x10); 
 	void* stack_top = stack_bottom + 0x10 * 0x1000; 
 	enable_interrupts();
+
+	// -- Allocate memory for socket list. Initialize list
+	
+	disable_interrupts();
+	LIST* sockets = (LIST*)kalloc(1);
+	enable_interrupts();
+	sockets->head = NULL;
+
+	// -- Add socket list to task state
+
+	task_state->sockets = sockets;
+	
+	// -- Set arp_sck to NULL
+
+	task_state->arp_sck = NULL;
 
 	PROCESS_FRAME* process_frame = stack_top - sizeof(PROCESS_FRAME) - 0x8; // Take 4 more bytes off, to account for the parameter value
 	process_frame->eflags = 0x202; // This should be set with a bit more thought. For now bits 9 and 1 are set.
@@ -372,18 +394,7 @@ Return:			NONE
 */
 void scheduler() {
 
-	// print_string("Current task state: ");
-	// print_dword((uint32_t)g_current_task_state);
-	// print_newline();
-
-	// if (g_current_task_state == g_task_state_list) {
-	// 	g_next_task_state = g_task_state_list->next;
-	// }
-	// else {
-	// 	g_next_task_state = g_task_state_list;
-	// }
-
-	serial_write_string("[SCHEDULER_START]");
+	serial_write_string("[SCHEDULER_START] Scheduler started.");
 	serial_write_newline();
 	serial_print_task_queue();
 	serial_print_delta_queue();	
@@ -400,11 +411,9 @@ void scheduler() {
 
 	}
 
+	// All processes are blocking, call the idle task
 	if (g_task_queue->first == NULL) {
-		// All processes are blocking, call the idle task
 		
-		// print_string("This should never be printed");
-		// print_newline();
 		g_next_task_state = g_idle_task_state; 
 
 	}
@@ -424,13 +433,13 @@ void scheduler() {
 		dq_element = g_delta_queue->first;
 	}
 
-	serial_write_string("[SCHEDULER_END]");
-	serial_write_newline();
 	serial_write_string("[CURRENT_TASK_STATE] Running process string: ");
 	serial_write_string(g_next_task_state->process_string);
 	serial_write_newline();
 	serial_print_task_queue();
 	serial_print_delta_queue();	
+	serial_write_string("[SCHEDULER_END] Scheduler ended.");
+	serial_write_newline();
 
 	return;
 

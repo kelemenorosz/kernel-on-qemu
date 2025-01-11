@@ -3,8 +3,8 @@
 
 typedef enum {
 
-	E_OK,
-	E_FAIL
+	E_OK = 0,
+	E_FAIL = 1
 
 } ERR_CODE;
 

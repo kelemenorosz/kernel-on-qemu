@@ -8,6 +8,7 @@
 #include "serial.h"
 #include "interrupt.h"
 #include "ipv4.h"
+#include "arp.h"
 
 typedef struct __attribute__((__packed__)) ETHER_HEADER {
 
@@ -27,6 +28,13 @@ void ether_req(NETWORK_PACKET* pkt, NETWORK_INTERFACE* intf, uint16_t ether_type
 		if (ip == 0) {
 			memset((void*)&ether_header->dest_addr[0], 0xFF, 6); 
 		}
+		memcpy((void*)&ether_header->src_addr[0], (void*)&intf->ether_addr[0], 6);
+		ether_header->ether_type = netswap16(ether_type);
+
+	}
+	else if (ether_type == ETHER_TYPE_ARP) {
+
+		memset((void*)&ether_header->dest_addr[0], 0xFF, 6);
 		memcpy((void*)&ether_header->src_addr[0], (void*)&intf->ether_addr[0], 6);
 		ether_header->ether_type = netswap16(ether_type);
 
@@ -61,6 +69,10 @@ ERR_CODE ether_decode(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* msg_desc, void
 
 		return ipv4_decode(msg, msg_desc, buf + sizeof(ETHER_HEADER));
 
+	}
+	else if (netswap16(ether_header->ether_type) == ETHER_TYPE_ARP) {
+
+		return arp_decode(msg, msg_desc, buf + sizeof(ETHER_HEADER));
 	}
 
 	return E_FAIL;
