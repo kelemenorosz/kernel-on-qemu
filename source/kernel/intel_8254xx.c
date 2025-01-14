@@ -243,7 +243,8 @@ void intel_8254xx_rx_init(INTEL_8254XX_DEVICE* device) {
 	rctl |= 1 << RCTL_EN_SHIFT;
 	rctl |= 1 << RCTL_SBP_SHIFT;
 	rctl |= 1 << RCTL_UPE_SHIFT;
-	rctl |= 1 << RCTL_MPE_SHIFT;
+	// TODO: Turn this back on once packet processing is fast enough.
+	// rctl |= 1 << RCTL_MPE_SHIFT; 
 	rctl |= 1 << RCTL_BAM_SHIFT;
 	rctl |= 0b11 << RCTL_BSIZE_SHIFT;
 	rctl |= 1 << RCTL_BSEX_SHIFT;
@@ -296,6 +297,7 @@ void intel_8254xx_tx_init(INTEL_8254XX_DEVICE* device) {
 
 }
 
+// TODO: For some reason packets aren't being processed fast enough. This results in kread() to hang for ever. For now Multicast Promiscuous has been turned off.
 void intel_8254xx_rx_poll(PPARAM device) {
 
 	INTEL_8254XX_DEVICE* device_ptr = (INTEL_8254XX_DEVICE*)device;
@@ -326,7 +328,7 @@ void intel_8254xx_rx_poll(PPARAM device) {
 			}
 		}
 
-		sleep(10);
+		// sleep(10);
 
 	}
 

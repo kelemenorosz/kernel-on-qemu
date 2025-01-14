@@ -48,6 +48,8 @@ SOCKET* ksocket(NETWORK_INTERFACE* intf, uint32_t port_in) {
 	sck->intf = intf;
 	sck->message_queue_in = NULL;
 	sck->message_queue_out = NULL;
+	sck->status = S_NULL;
+	sck->connect_status = S_NULL;
 
 	// -- Add socket to process' socket list
 
@@ -72,11 +74,11 @@ ERR_CODE kconnect(SOCKET* sck, uint32_t ip_out, uint32_t port_out, uint32_t prot
 	if (protocol == SOCKET_PROTOCOL_TCP && sck->intf->ip_addr == 0) return E_FAIL;
 	if (protocol == SOCKET_PROTOCOL_TCP) {
 		
-		// -- ARP if not in cache
+		// -- 'ip_out' is on the subnet
 
 		if ((sck->intf->subnet_mask & sck->intf->ip_addr) == (sck->intf->subnet_mask & ip_out)) {
 
-			// -- 'ip_out' is on the subnet
+			// -- ARP if not in cache
 
 			ERR_CODE error_code = arp_lookup(ip_out, NULL);
 
@@ -107,6 +109,36 @@ ERR_CODE kconnect(SOCKET* sck, uint32_t ip_out, uint32_t port_out, uint32_t prot
 
 		}
 
+		// -- Set socket info
+
+		sck->ip_out = ip_out;
+		sck->port_out = port_out;
+		sck->protocol = protocol;
+		disable_interrupts();
+		sck->message_queue_in = (QUEUE*)kalloc(1);
+		sck->message_queue_out = (QUEUE*)kalloc(1);
+		enable_interrupts();
+		sck->message_queue_in->head = NULL;
+		sck->message_queue_in->tail = NULL;
+		sck->message_queue_out->head = NULL;
+		sck->message_queue_out->tail = NULL;
+		sck->seq = 0;
+		sck->ack = 0;
+		sck->status = S_SYN;
+		sck->connect_status = S_SYN;
+
+		disable_interrupts();
+		serial_write_string("[SOCKET] kconnect() - PORT_IN 0x");
+		serial_write_dword(sck->port_in);
+		serial_write_string("; PORT_OUT 0x");
+		serial_write_dword(sck->port_out);
+		serial_write_newline();
+		enable_interrupts();
+
+		// -- Wait for SYN-ACK handshake
+
+		while (sck->connect_status != S_OPEN) sleep(2);
+
 		return E_OK;
 	
 	}
@@ -119,6 +151,8 @@ ERR_CODE kconnect(SOCKET* sck, uint32_t ip_out, uint32_t port_out, uint32_t prot
 		sck->ip_out = ip_out;
 		sck->port_out = port_out;
 		sck->protocol = protocol;
+		sck->seq = 0;
+		sck->ack = 0;
 		disable_interrupts();
 		sck->message_queue_in = (QUEUE*)kalloc(1);
 		sck->message_queue_out = (QUEUE*)kalloc(1);
@@ -155,6 +189,7 @@ ERR_CODE kwrite(SOCKET* sck, void* buf, size_t len) {
 	serial_write_newline();
 	enable_interrupts();
 
+
 	disable_interrupts();
 	void* copy_buf = kalloc(1);
 	NETWORK_MESSAGE* net_msg = (NETWORK_MESSAGE*)kalloc(1); 
@@ -167,6 +202,8 @@ ERR_CODE kwrite(SOCKET* sck, void* buf, size_t len) {
 	queue_push(sck->message_queue_out, net_msg);
 	enable_interrupts();
 
+	sck->status = S_WRITE;
+	
 	return E_OK;
 
 }
@@ -197,3 +234,28 @@ uint32_t kread(SOCKET* sck, void* buf) {
 	return message_len;
 
 }
+
+void kclose(SOCKET* sck) {
+
+	disable_interrupts();
+	serial_write_string("[SOCKET] kclose() - PORT_IN 0x");
+	serial_write_dword(sck->port_in);
+	serial_write_string("; PORT_OUT 0x");
+	serial_write_dword(sck->port_out);
+	serial_write_newline();
+	enable_interrupts();
+
+	if (sck->protocol == SOCKET_PROTOCOL_TCP) {
+		// -- TCP
+		while (sck->status != S_OPEN) sleep(2);
+		disable_interrupts();
+		sck->status = S_FIN;
+		enable_interrupts();
+	}
+	else if (sck->protocol == SOCKET_PROTOCOL_UDP) {
+		// -- UDP
+	}
+
+	return;
+
+} 

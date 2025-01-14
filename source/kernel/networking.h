@@ -34,6 +34,9 @@ typedef struct __attribute__((__packed__)) NETWORK_MESSAGE_DESC {
 	uint32_t protocol;
 	uint32_t src_port;
 	uint32_t dest_port;
+	uint32_t flags;
+	uint32_t seq;
+	uint32_t ack;
 
 } NETWORK_MESSAGE_DESC;
 

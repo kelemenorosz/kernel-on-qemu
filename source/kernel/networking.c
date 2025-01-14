@@ -16,6 +16,8 @@
 #include "serial.h"
 #include "ethernet.h"
 #include "arp.h"
+#include "tcp.h"
+#include "netswap.h"
 
 LIST* g_network_interfaces = NULL;
 
@@ -180,38 +182,132 @@ void networking_tx_poll() {
 
 				// -- Send messages until the outbound message queue is empty 
 
-				while (sck->message_queue_out != NULL && sck->message_queue_out->head != NULL) {
-				
-					disable_interrupts();
-					NETWORK_MESSAGE* net_msg = queue_pop(sck->message_queue_out);
-					void* wrap_buf = kalloc(1); // TODO: Make sure to kfree() in tx_send() when inserting new buffer into TX descriptor  
-					enable_interrupts();
-					memcpy(wrap_buf + 0x100, net_msg->buf, net_msg->len);
-					NETWORK_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100 + net_msg->len};
-					disable_interrupts();
-					kfree(net_msg->buf, 1);
-					kfree(net_msg, 1);
-					enable_interrupts();
 
-					// -- Assemble packet
-					if (sck->protocol == SOCKET_PROTOCOL_UDP) {
-						// -- UDP
+				if (sck->protocol == SOCKET_PROTOCOL_UDP) {
+					// -- UDP
+
+					while (sck->message_queue_out != NULL && sck->message_queue_out->head != NULL) {
+					
+						disable_interrupts();
+						NETWORK_MESSAGE* net_msg = queue_pop(sck->message_queue_out);
+						void* wrap_buf = kalloc(1); // TODO: Make sure to kfree() in tx_send() when inserting new buffer into TX descriptor  
+						enable_interrupts();
+						memcpy(wrap_buf + 0x100, net_msg->buf, net_msg->len);
+						NETWORK_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100 + net_msg->len};
+						disable_interrupts();
+						kfree(net_msg->buf, 1);
+						kfree(net_msg, 1);
+						enable_interrupts();
+
+						// -- Assemble packet
+					
 						udp_req(&pkt, sck->intf, sck->port_out, sck->port_in, sck->ip_out);
+						
+						// -- Send packet
+
+						disable_interrupts();
+						serial_write_string("[TX_POLL] Sending UDP packet for process ");
+						serial_write_string(task_state->process_string);
+						serial_write_newline();
+						enable_interrupts();
+
+						sck->intf->tx_send(sck->intf->device, &pkt);
+					
 					}
-					else {
-						// -- TCP
-					}
-
-					// -- Send packet
-
-					disable_interrupts();
-					serial_write_string("[TX_POLL] Sending packet for process with ESP 0x");
-					serial_write_dword(task_state->esp);
-					serial_write_newline();
-					enable_interrupts();
-
-					sck->intf->tx_send(sck->intf->device, &pkt);
 				
+				}
+				else if (sck->protocol == SOCKET_PROTOCOL_TCP) {
+					// -- TCP
+
+					if (sck->status == S_SYN) {
+						// -- Send SYN
+						
+						sck->status = S_OPEN;
+
+						disable_interrupts();
+						void* wrap_buf = kalloc(1);
+						enable_interrupts();
+
+						NETWORK_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100};
+						
+						disable_interrupts();
+						serial_write_string("[TX_POLL] Sending TCP SYN packet for process ");
+						serial_write_string(task_state->process_string);
+						serial_write_newline();
+						enable_interrupts();
+
+						tcp_req(&pkt, sck->intf, sck->port_out, sck->port_in, sck->ip_out, TCP_SYN, sck->seq, sck->ack);
+						sck->seq++;
+						sck->intf->tx_send(sck->intf->device, &pkt);
+
+					}
+					else if (sck->status == S_FIN) {
+						// -- Send FIN
+
+						sck->status = S_OPEN;
+
+						disable_interrupts();
+						void* wrap_buf = kalloc(1);
+						enable_interrupts();
+
+						NETWORK_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100};
+						
+						disable_interrupts();
+						serial_write_string("[TX_POLL] Sending TCP FIN packet for process ");
+						serial_write_string(task_state->process_string);
+						serial_write_newline();
+						enable_interrupts();
+
+						tcp_req(&pkt, sck->intf, sck->port_out, sck->port_in, sck->ip_out, TCP_FIN | TCP_ACK, sck->seq, sck->ack);
+						sck->seq++;
+						sck->intf->tx_send(sck->intf->device, &pkt);
+
+					}
+					else if (sck->status == S_WRITE && sck->message_queue_out->head != NULL) {
+
+						disable_interrupts();
+						NETWORK_MESSAGE* net_msg = queue_pop(sck->message_queue_out);
+						void* wrap_buf = kalloc(1);
+						enable_interrupts();
+
+						memcpy(wrap_buf + 0x100, net_msg->buf, net_msg->len);
+						NETWORK_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100 + net_msg->len};
+
+						tcp_req(&pkt, sck->intf, sck->port_out, sck->port_in, sck->ip_out, TCP_PSH | TCP_ACK, sck->seq, sck->ack);
+						sck->seq += net_msg->len;
+
+						disable_interrupts();
+						kfree(net_msg->buf, 1);
+						kfree(net_msg, 1);
+						enable_interrupts();
+
+						sck->intf->tx_send(sck->intf->device, &pkt);
+
+					}
+					else if (sck->status == S_ACK) {
+						// -- Send ACK
+
+						sck->status = S_OPEN;
+
+						disable_interrupts();
+						void* wrap_buf = kalloc(1);
+						enable_interrupts();
+
+						NETWORK_PACKET pkt = {wrap_buf + 0x100, wrap_buf + 0x100};
+						
+						disable_interrupts();
+						serial_write_string("[TX_POLL] Sending TCP ACK packet for process ");
+						serial_write_string(task_state->process_string);
+						serial_write_newline();
+						enable_interrupts();
+
+						tcp_req(&pkt, sck->intf, sck->port_out, sck->port_in, sck->ip_out, TCP_ACK, sck->seq, sck->ack);
+						sck->intf->tx_send(sck->intf->device, &pkt);
+
+						if (sck->connect_status == S_SYN) sck->connect_status = S_OPEN;
+
+					}
+
 				}
 
 				sck_entry = sck_entry->next;
@@ -220,7 +316,7 @@ void networking_tx_poll() {
 			process_entry = process_entry->next; 
 		}
 
-		sleep(100);
+		sleep(10);
 
 	}
 
@@ -257,7 +353,14 @@ void networking_rx_sort(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* desc, void* 
 			while (sck_entry != NULL) {
 			
 				SOCKET* sck = (SOCKET*)sck_entry->ptr;
-				if (sck->port_in == desc->dest_port && sck->port_out == desc->src_port && sck->message_queue_in != NULL) {
+				disable_interrupts();
+				serial_write_string("[RX_SORT] Socket: source port 0x");
+				serial_write_dword(sck->port_in);
+				serial_write_string(", destination port 0x");
+				serial_write_dword(sck->port_out);
+				serial_write_newline();
+				enable_interrupts();
+				if (sck->message_queue_in != NULL && sck->port_in == desc->dest_port && sck->port_out == desc->src_port) {
 					disable_interrupts();
 					queue_push(sck->message_queue_in, msg);
 					enable_interrupts();
@@ -274,6 +377,102 @@ void networking_rx_sort(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* desc, void* 
 	else if (desc->protocol == NETWORK_MESSAGE_PROTOCOL_ARP) {
 
 		arp_sort(msg, device, rar_add);
+
+		disable_interrupts();
+		kfree(msg->buf, 1);
+		kfree(msg, 1);
+		enable_interrupts();
+
+	}
+	else if (desc->protocol == NETWORK_MESSAGE_PROTOCOL_TCP) {
+
+		disable_interrupts();
+		serial_write_string("[RX_SORT] Processing TCP message. Source port 0x");
+		serial_write_dword(desc->src_port);
+		serial_write_string(". Destination port 0x");
+		serial_write_dword(desc->dest_port);
+		serial_write_newline();
+		enable_interrupts();
+
+		// -- Check if there is a socket that matches the message's source and destination ports
+
+		LIST_ENTRY* process_entry = g_processes->head;
+		while (process_entry != NULL) {
+			
+			TASK_STATE* task_state = (TASK_STATE*)process_entry->ptr;
+
+			LIST_ENTRY* sck_entry = NULL;
+			if (task_state->sockets != NULL) sck_entry = task_state->sockets->head;
+			while (sck_entry != NULL) {
+			
+				SOCKET* sck = (SOCKET*)sck_entry->ptr;
+				disable_interrupts();
+				serial_write_string("[RX_SORT] Socket: source port 0x");
+				serial_write_dword(sck->port_in);
+				serial_write_string(", destination port 0x");
+				serial_write_dword(sck->port_out);
+				serial_write_newline();
+				enable_interrupts();
+
+				if (sck->status == S_OPEN || sck->status == S_WRITE) {
+
+					if ((desc->flags & TCP_SYN) && (sck->ack == 0) && (sck->seq == desc->ack)) {
+						// -- Corrent SYN-ACK message. Client-side ACK not yet set. Client-side SEQ matches server-side ACK. 
+
+						disable_interrupts();
+						serial_write_string("[RX_SORT] Recieved TCP SYN-ACK.");
+						serial_write_newline();
+						enable_interrupts();
+
+						sck->ack = desc->seq + 1;
+						sck->status = S_ACK;
+
+					}
+					else if ((desc->flags & TCP_FIN) && (sck->seq == desc->ack) && (sck->ack == desc->seq)) {
+
+						disable_interrupts();
+						serial_write_string("[RX_SORT] Recieved TCP FIN-ACK.");
+						serial_write_newline();
+						enable_interrupts();
+
+						sck->ack = desc->seq + 1;
+						sck->status = S_ACK;
+
+					}
+					else if ((desc->flags & TCP_PSH) && (sck->seq == desc->ack) && (sck->ack == desc->seq)) {
+
+						disable_interrupts();
+						serial_write_string("[RX_SORT] Recieved TCP PSH-ACK.");
+						serial_write_newline();
+						enable_interrupts();
+
+						sck->ack += msg->len;
+						sck->status = S_ACK;
+
+						disable_interrupts();
+						queue_push(sck->message_queue_in, msg);
+						enable_interrupts();
+						return;
+
+					}
+					else if ((desc->flags & TCP_ACK) && (sck->seq == desc->ack) && (sck->ack == desc->seq)) {
+
+						disable_interrupts();
+						serial_write_string("[RX_SORT] Recieved TCP ACK.");
+						serial_write_newline();
+						enable_interrupts();
+
+						sck->connect_status = S_OPEN;
+
+					}
+
+				}
+
+				sck_entry = sck_entry->next;			
+			}
+			
+			process_entry = process_entry->next;
+		}
 
 		disable_interrupts();
 		kfree(msg->buf, 1);

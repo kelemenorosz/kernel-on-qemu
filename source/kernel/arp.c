@@ -46,9 +46,6 @@ typedef struct __attribute__((__packed__)) ARP_LIST {
 
 ARP_LIST* g_arp_list = NULL; 
 
-// extern uint32_t g_this_ip;
-// extern ETHERNET_DEVICE g_ethernet_device;
-
 ERR_CODE arp_lookup(uint32_t ip, uint8_t* eth_addr) {
 
 	// -- If arp table is not initialized initialize it
@@ -69,7 +66,6 @@ ERR_CODE arp_lookup(uint32_t ip, uint8_t* eth_addr) {
 	if (arp_entry == NULL) {
 		return E_FAIL;
 	}
-
 
 	if (eth_addr != NULL) memcpy(eth_addr, &arp_entry->eth[0], 6);
 	return E_OK;
@@ -142,60 +138,3 @@ void arp_sort(NETWORK_MESSAGE* msg, void* device, void(*rar_add)(void* device, v
 	return;
 
 }
-
-// uint8_t arp_decode(void* buf) {
-
-// 	ARP_HEADER* arp_header = (ARP_HEADER*)buf;
-// 	uint8_t* addr = NULL;
-
-// 	disable_interrupts();
-// 	serial_write_string("[RX_ARP_HEADER] ARP Header with sender IP: ");
-// 	addr = (uint8_t*)&arp_header->protocol_sender_addr;
-// 	for (uint8_t i = 0; i < 4; ++i) {
-// 		serial_write_byte(addr[i]);
-// 		if (i != 3) serial_write_string(".");
-// 	}
-// 	serial_write_newline();
-// 	serial_write_string("[RX_ARP_HEADER] ARP Header with target IP: ");
-// 	addr = (uint8_t*)&arp_header->protocol_target_addr;
-// 	for (uint8_t i = 0; i < 4; ++i) {
-// 		serial_write_byte(addr[i]);
-// 		if (i != 3) serial_write_string(".");
-// 	}
-// 	serial_write_newline();
-// 	serial_write_string("[RX_ARP_HEADER] ARP Header with opcode 0x");
-// 	serial_write_word(netswap16(arp_header->opcode));
-// 	serial_write_newline();
-// 	enable_interrupts();
-
-// 	if (netswap16(arp_header->opcode) == ARP_OPCODE_REPLY) {
-
-// 		// -- Check if not already in ARP list
-// 		ARP_ENTRY* arp_entry = g_arp_list->arp_head;
-// 		while (arp_entry != NULL && arp_entry->ip != netswap32(arp_header->protocol_sender_addr)) arp_entry = arp_entry->arp_next;
-
-// 		if (arp_entry != NULL) return 0;
-
-// 		// -- Save MAC in ARP list
-
-// 		disable_interrupts();
-// 		ARP_ENTRY* new_entry = (ARP_ENTRY*)kalloc(1);
-// 		enable_interrupts();
-
-// 		new_entry->ip = netswap32(arp_header->protocol_sender_addr);
-// 		memcpy((void*)&new_entry->eth[0], (void*)&arp_header->hardware_sender_addr[0], 6);
-
-// 		new_entry->arp_next = g_arp_list->arp_head;
-// 		g_arp_list->arp_head = new_entry;
-
-// 		// -- Add MAC to the receive address registers
-
-// 		rar_add((void*)&new_entry->eth[0]);
-
-// 		return 0;
-
-// 	}
-
-// 	return 0;
-
-// }

@@ -52,8 +52,16 @@ void ipv4_req(NETWORK_PACKET* pkt, NETWORK_INTERFACE* intf, uint8_t protocol, ui
 	uint16_t checksum = netchecksum(pkt->start, pkt->start + sizeof(IPV4_HEADER));
 	ipv4_header->checksum = netswap16(checksum);
 
-	ether_req(pkt, intf, ETHER_TYPE_IPV4, ip);
-
+	if (ip == 0) {
+		ether_req(pkt, intf, ETHER_TYPE_IPV4, 0);
+	}
+	else if ((intf->subnet_mask & ip) == (intf->subnet_mask & intf->ip_addr_dhcp)) {
+		ether_req(pkt, intf, ETHER_TYPE_IPV4, ip);
+	}
+	else {
+		ether_req(pkt, intf, ETHER_TYPE_IPV4, intf->ip_addr_dhcp);
+	}
+	
 	return;
 
 }
@@ -85,61 +93,12 @@ ERR_CODE ipv4_decode(NETWORK_MESSAGE* msg, NETWORK_MESSAGE_DESC* msg_desc, void*
 		return udp_decode(msg, msg_desc, buf + sizeof(IPV4_HEADER));
  	
  	}
+ 	else if (ipv4_header->protocol == IPV4_PROTOCOL_TCP) {
+
+ 		return tcp_decode(msg, msg_desc, buf + sizeof(IPV4_HEADER), netswap16(ipv4_header->tol) - sizeof(IPV4_HEADER));
+
+ 	}
 
  	return E_FAIL;
 
 }
-
-	// }
-	// else if (ipv4_header->protocol == IPV4_PROTOCOL_TCP) {
-
-	// 	return tcp_decode(buf + sizeof(IPV4_HEADER), netswap16(ipv4_header->tol) - sizeof(IPV4_HEADER));
-
-	// }
-
-	// if (ip == 0) {
-	// 	ether_req(pkt, ETHER_TYPE_IPV4, 0);
-	// } 
-	// else if ((g_subnet_mask & ip) == (g_subnet_mask & g_dhcp_ip)) {
-	// 	ether_req(pkt, ETHER_TYPE_IPV4, ip);  // If within the same network
-	// }
-	// else {
-	// 	ether_req(pkt, ETHER_TYPE_IPV4, g_dhcp_ip); // If not on the same network 
-	// }
-
-// uint32_t ipv4_decode(void* buf) {
-
-// 	IPV4_HEADER* ipv4_header = (IPV4_HEADER*)buf;
-// 	uint8_t* addr = NULL;
-
-// 	disable_interrupts();
-// 	serial_write_string("[RX_IPV4_HEADER] IPv4 header with destination IP address ");
-// 	addr = (uint8_t*)&ipv4_header->dest_addr;
-// 	for (uint8_t i = 0; i < 4; ++i) {
-// 		serial_write_byte(addr[i]);
-// 		if (i != 3) serial_write_string(".");
-// 	}
-// 	serial_write_newline();
-// 	serial_write_string("[RX_IPV4_HEADER] IPv4 header with source IP address ");
-// 	addr = (uint8_t*)&ipv4_header->src_addr;
-// 	for (uint8_t i = 0; i < 4; ++i) {
-// 		serial_write_byte(addr[i]);
-// 		if (i != 3) serial_write_string(".");
-// 	}
-// 	serial_write_newline();
-// 	enable_interrupts();
-
-// 	if (ipv4_header->protocol == IPV4_PROTOCOL_UDP) {
-
-// 		return udp_decode(buf + sizeof(IPV4_HEADER));
-
-// 	}
-// 	else if (ipv4_header->protocol == IPV4_PROTOCOL_TCP) {
-
-// 		return tcp_decode(buf + sizeof(IPV4_HEADER), netswap16(ipv4_header->tol) - sizeof(IPV4_HEADER));
-
-// 	}
-
-// 	return 0;
-
-// }
