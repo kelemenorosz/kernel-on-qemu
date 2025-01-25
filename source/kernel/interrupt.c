@@ -4,6 +4,8 @@
 
 #include "interrupt.h"
 #include "io.h"
+#include "print.h"
+#include "serial.h"
 
 typedef struct __attribute__((__packed__)) IDT_ENTRY {
 
@@ -63,6 +65,33 @@ void PIC_line_enable(size_t line) {
 
 	uint8_t pic_mask = ioreadb(data_port);
 	pic_mask = pic_mask & ~(1 << line_shift);
+
+	iowriteb(data_port, pic_mask);
+
+	return;
+
+}
+
+/*
+Function: 		PIC_line_disable
+Description: 	Disables 'line' interrupt on the PICs. 
+Return:			NONE
+*/
+void PIC_line_disable(size_t line) {
+
+	uint8_t data_port = 0x0;
+	uint8_t line_shift = 0x0;
+	if (line > 0x8) {
+		data_port = PIC2_DATA;
+		line_shift = line - 0x8;
+	}
+	else {
+		data_port = PIC1_DATA;
+		line_shift = line;
+	}
+
+	uint8_t pic_mask = ioreadb(data_port);
+	pic_mask = pic_mask | (1 << line_shift);
 
 	iowriteb(data_port, pic_mask);
 

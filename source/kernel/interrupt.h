@@ -16,5 +16,6 @@ void disable_interrupts();
 extern void raise_interrupt_0x80();
 
 void PIC_line_enable(size_t line);
+void PIC_line_disable(size_t line);
 
 #endif /* INTERRUPT_H */

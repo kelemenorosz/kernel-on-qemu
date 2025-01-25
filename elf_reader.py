@@ -18,9 +18,27 @@ def main():
 
 		with open("kernel_extract.bin", mode='wb') as kernel_extract_file:
 
+			base_addr = 0
+			write_addr = 0
+
 			for i in range(program_header_count):
 				program_header = struct.unpack("<LLLLLLLL", kernel_file_buf[program_header_offset:(program_header_offset + program_header_size)])
 				print(program_header)
+
+				current_address = program_header[3]
+
+				if base_addr == 0:
+					base_addr = program_header[3]
+				if write_addr == 0:
+					write_addr = base_addr
+
+				print("base address: " + hex(base_addr))
+				print("write address: " + hex(write_addr))
+				print("current address: " + hex(program_header[3]))
+
+				if current_address > write_addr:
+					kernel_extract_file.write(bytearray('\0' * (current_address - write_addr), encoding='utf-8'))
+					write_addr = current_address
 
 				p_filesz = program_header[4]
 				p_offset = program_header[1]
@@ -30,6 +48,10 @@ def main():
 				if p_filesz != 0:
 					kernel_extract_file.write(bytearray('\0' * fill_count, encoding='utf-8'))
 				program_header_offset += program_header_size
+
+				write_size = p_filesz + fill_count
+				print("write size: " + hex(write_size))
+				write_addr += write_size
 
 if __name__ == "__main__":
 	main()

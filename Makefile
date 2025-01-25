@@ -31,7 +31,7 @@ $(BUILD_DIR)/$(BOOTLOADER_DIR)%.asm.bin: $(BOOTLOADER_DIR)%.asm
 
 $(BUILD_DIR)/$(KERNEL_DIR)%.s.o: $(KERNEL_DIR)%.s
 	mkdir -p $(dir $@)
-	$(AS) $< -o $@
+	$(AS) $< -o $@ -g
 
 $(BUILD_DIR)/$(KERNEL_DIR)%.c.o: $(KERNEL_DIR)%.c
 	mkdir -p $(dir $@)

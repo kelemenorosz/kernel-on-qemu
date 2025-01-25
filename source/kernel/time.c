@@ -37,64 +37,10 @@ Return:			NONE
 */
 void sleep(uint32_t ticks_to_sleep) {
 
-	disable_interrupts();
-	
-	// Set task to blocking
-	g_current_task_state->is_blocking = 0x1;
-
-	// Create delta queue element
-	DELTA_QUEUE_ELEMENT* dq_element = (DELTA_QUEUE_ELEMENT*)kalloc(1);
-	dq_element->ticks_to_wakeup = ticks_to_sleep;
-	dq_element->task_state = g_current_task_state;
-	dq_element->next = NULL;
-
-	// Insert it into the delta queue
-	DELTA_QUEUE_ELEMENT* dq_walk = g_delta_queue->first;
-	DELTA_QUEUE_ELEMENT* dq_insert_after = NULL;
-	while (dq_walk != NULL && dq_element->ticks_to_wakeup >= dq_walk->ticks_to_wakeup) {
-		dq_element->ticks_to_wakeup -= dq_walk->ticks_to_wakeup;
-		dq_insert_after = dq_walk;
-		dq_walk = dq_walk->next; 
-	}
-
-	if (dq_insert_after == NULL) {
-		// Insert it at the head position
-		if (dq_walk != NULL) g_delta_queue->first->ticks_to_wakeup -= dq_element->ticks_to_wakeup; 
-		dq_element->next = g_delta_queue->first;
-		g_delta_queue->first = dq_element;
-	}
-	else {
-		if (dq_walk != NULL) dq_insert_after->next->ticks_to_wakeup -= dq_element->ticks_to_wakeup; 
-		dq_element->next = dq_insert_after->next;
-		dq_insert_after->next = dq_element;
-	}
-
-	// print_delta_queue();
-
-	// print_string("TASK STATE to sleep: ");
-	// print_dword((uint32_t)g_current_task_state);
-	// print_newline();
-
-	serial_write_string("[INFO] Pushing process onto DELTA_QUEUE with ESP 0x");
-	serial_write_dword(g_current_task_state->esp);
-	serial_write_string(". Process string: ");
-	serial_write_string(g_current_task_state->process_string);
-	serial_write_string(" for 0x");
-	serial_write_dword(ticks_to_sleep);
-	serial_write_string(" ticks");
-	serial_write_newline();
-
-	// -- TODO -- Make sure there have been no previous calls to disable_interrupts() 
-
-	enable_interrupts();
-
-	// Raise the task switching interrupt
-	raise_interrupt_0x80();
-
-	// g_PIT_count_down = ticks_to_sleep;	
-	// while (g_PIT_count_down > 0) {
-	// 	asm __volatile__ ("hlt");
-	// } 
+	g_PIT_count_down = ticks_to_sleep;	
+	while (g_PIT_count_down > 0) {
+		asm __volatile__ ("hlt");
+	} 
 
 	return;
 
@@ -108,17 +54,10 @@ Return:			NONE
 */
 void time_init() {
 
-	disable_interrupts();
-	g_delta_queue = (DELTA_QUEUE*)kalloc(1);
-	g_delta_queue->first = NULL;
-	enable_interrupts();
-
 	PIT_init();
 	register_interrupt(interrupt_wrapper_PIT, 0x0);
 	PIC_line_enable(0x0);
-
-	register_software_interrupt(interrupt_wrapper_software_blocking, 0x80);
-
+	
 	return;
 
 }
