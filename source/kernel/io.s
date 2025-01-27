@@ -3,10 +3,14 @@
 .type ioread, @function
 .global ioreadb
 .type ioreadb, @function
+.global ioreadw
+.type ioreadw, @function
 .global iowrite
 .type iowrite, @function
 .global iowriteb
 .type iowriteb, @function
+.global iowritew
+.type iowritew, @function
 
 ioread:
 

@@ -3,6 +3,7 @@
 #include <stdbool.h>
 
 #include "virtual8086_monitor.h"
+#include "virtual8086.h"
 #include "print.h"
 #include "serial.h"
 #include "eflags.h"
@@ -54,6 +55,8 @@ V86_TASK_STATE g_v86_task_state;
 #define INSTRUCTION_PUSHF 3
 #define INSTRUCTION_POPF 4
 #define INSTRUCTION_OUT 5
+#define INSTRUCTION_IN 6
+#define INSTRUCTION_IRET 7
 
 uint32_t virtual8086_monitor(void* stack_frame) {
 
@@ -86,25 +89,34 @@ uint32_t virtual8086_monitor(void* stack_frame) {
 
 	uint32_t is_opcode32 = 0;
 
+	if (v86_sframe->eip == 0xFFFF) {
+		serial_write_string("[UHOH]");
+		serial_write_newline();
+		return INSTRUCTION_UNKNOWN;
+	}
+
 	switch(opcode_ptr[0]) {
 
 		case 0xCD:
 
 			// -- INT
 
-			// print_string("INT ");
-			// print_byte(opcode_ptr[1]);
-			// print_newline();
+			if (opcode_ptr[1] == 0x81) {
+				exit_virtual8086();
+
+				// exit_virtual8086() contains a stack switch to the proper ring0 stack
+				// code execution doesn't return to the GP handler
+			
+			}
 
 			// -- Save EFLAGS, CS and EIP on ring3 stack
 			// TODO: take virtual interrupt flag into consideration 
-
 			ring3_stack_u8 -= 2;
-			*(uint16_t*)ring3_stack_u8 = v86_sframe->eflags;
+			*(uint16_t*)ring3_stack_u8 = v86_sframe->eflags | (1 << EFLAGS_IF_SHIFT);
 			ring3_stack_u8 -= 2;
 			*(uint16_t*)ring3_stack_u8 = v86_sframe->cs;
-			ring3_stack_u8 -= 4;
-			*(uint32_t*)ring3_stack_u8 = v86_sframe->eip;
+			ring3_stack_u8 -= 2;
+			*(uint16_t*)ring3_stack_u8 = (uint16_t)(v86_sframe->eip & 0xFFFF);
 
 			v86_sframe->esp = (uint32_t)ring3_stack_u8 & 0xFFFF;
 			v86_sframe->ss = ((uint32_t)ring3_stack_u8 & 0xF0000) >> 4;
@@ -116,23 +128,35 @@ uint32_t virtual8086_monitor(void* stack_frame) {
 
 			// -- Change EIP and CS to point to 8086 interrupt handler
 
-			// print_string("IVT location: ");
-			// print_dword(opcode_ptr[1] * 4);
-			// print_newline();
-
-			// print_string("Interrupt offset: ");
-			// print_word(ivt_ptr[opcode_ptr[1]].offset);
-			// print_newline();
-			
-			// print_string("Interrupt segment: ");
-			// print_word(ivt_ptr[opcode_ptr[1]].segment);
-			// print_newline();
-
 			v86_sframe->eip = ivt_ptr[opcode_ptr[1]].offset;
 			v86_sframe->cs = ivt_ptr[opcode_ptr[1]].segment;
 
 			return INSTRUCTION_INT;
+			break;
 
+		case 0xCF:
+
+			// -- IRET
+
+			// -- Pop off EFLAGS, CS and EIP from ring3 stack
+
+			v86_sframe->eip = *(uint16_t*)ring3_stack_u8;
+			ring3_stack_u8 += 2;
+			v86_sframe->cs = *(uint16_t*)ring3_stack_u8;
+			ring3_stack_u8 += 2;
+			v86_sframe->eflags = (v86_sframe->eflags & 0xFFFF0000) + *(uint16_t*)ring3_stack_u8;
+			ring3_stack_u8 += 2;
+
+			// -- Re-set ring3 stack
+
+			v86_sframe->esp = (uint32_t)ring3_stack_u8 & 0xFFFF;
+			v86_sframe->ss = ((uint32_t)ring3_stack_u8 & 0xF0000) >> 4;
+
+			// -- Increment EIP
+
+			v86_sframe->eip += 2;
+
+			return INSTRUCTION_IRET;
 			break;
 
 		case 0xFA:
@@ -166,16 +190,24 @@ uint32_t virtual8086_monitor(void* stack_frame) {
 				// -- Set EFLAGS
 
 				if (g_v86_task_state.virtual_if) {
-					*(uint16_t*)ring3_stack_u8 = v86_sframe->eflags | (1 << EFLAGS_IF_SHIFT);
+					*(uint16_t*)ring3_stack_u8 = (v86_sframe->eflags & (0xDFF)) | (1 << EFLAGS_IF_SHIFT);
 				}
 				else {
-					*(uint16_t*)ring3_stack_u8 = v86_sframe->eflags & !(1 << EFLAGS_IF_SHIFT);
+					*(uint16_t*)ring3_stack_u8 = (v86_sframe->eflags & (0xDFF)) & !(1 << EFLAGS_IF_SHIFT);
 				}
 
 				// -- Update ring0 stack frame
 
-				v86_sframe->esp = (uint32_t)ring3_stack_u8 & 0xFFFF;
-				v86_sframe->ss = ((uint32_t)ring3_stack_u8 & 0xF0000) >> 4;
+				// Don't ever do this again.
+				// Flattening the SS:ESP and splitting it into segment:offset again is a NO-NO.
+				// Doing it this way messed up whatever the BIOS interrupt code was up to.	
+				//
+				// v86_sframe->esp = (uint32_t)ring3_stack_u8 & 0xFFFF;
+				// v86_sframe->ss = ((uint32_t)ring3_stack_u8 & 0xF0000) >> 4;
+				//
+				// TODO: Check what PUSHF would do in case of v86_sframe->esp overflow. I would think nothing. It'd wrap around.
+
+				v86_sframe->esp -= 2;
 
 			}
 
@@ -212,8 +244,9 @@ uint32_t virtual8086_monitor(void* stack_frame) {
 
 				// -- Update ring 0 stack frame ring3 ESP and SS
 
-				v86_sframe->esp = (uint32_t)ring3_stack_u8 & 0xFFFF;
-				v86_sframe->ss = ((uint32_t)ring3_stack_u8 & 0xF0000) >> 4;
+				// v86_sframe->esp = (uint32_t)ring3_stack_u8 & 0xFFFF;
+				// v86_sframe->ss = ((uint32_t)ring3_stack_u8 & 0xF0000) >> 4;
+				v86_sframe->esp += 2;
 
 			}
 
@@ -228,11 +261,11 @@ uint32_t virtual8086_monitor(void* stack_frame) {
 
 			// -- OUT DX, AL
 
-			serial_write_string("EAX: ");
+			serial_write_string("EAX: 0x");
 			serial_write_dword(gp_sframe->eax0);
 			serial_write_newline();
 
-			serial_write_string("EDX: ");
+			serial_write_string("EDX: 0x");
 			serial_write_dword(gp_sframe->edx);
 			serial_write_newline();
 
@@ -243,6 +276,94 @@ uint32_t virtual8086_monitor(void* stack_frame) {
 			v86_sframe->eip++;
 
 			return INSTRUCTION_OUT;
+			break;
+
+		case 0xEF:
+
+			// -- OUT DX, AX
+			// -- OUT DX, EAX
+
+			serial_write_string("EAX: 0x");
+			serial_write_dword(gp_sframe->eax0);
+			serial_write_newline();
+
+			serial_write_string("EDX: 0x");
+			serial_write_dword(gp_sframe->edx);
+			serial_write_newline();
+
+			if (is_opcode32) {
+
+				// -- OUT 32 bits
+
+			}
+			else {
+
+				// -- OUT 16 bits
+
+				iowritew(gp_sframe->edx & 0xFFFF, gp_sframe->eax0 & 0xFFFF);
+
+			}
+
+			// -- Increment EIP
+
+			v86_sframe->eip++;
+
+			return INSTRUCTION_OUT;
+			break;
+
+		case 0xEC:
+
+			// -- IN AL, DX
+
+			serial_write_string("EDX: 0x");
+			serial_write_dword(gp_sframe->edx);
+			serial_write_newline();
+
+			// TODO: I don't know if this would preserve the upper 24-bits
+			gp_sframe->eax0 = (gp_sframe->eax0 & 0xFFFFFF00) + ioreadb(gp_sframe->edx & 0xFFFF);
+
+			serial_write_string("EAX: 0x");
+			serial_write_dword(gp_sframe->eax0);
+			serial_write_newline();
+
+			// -- Increment EIP
+
+			v86_sframe->eip++;
+
+			return INSTRUCTION_IN;
+			break;
+
+		case 0xED:
+
+			// -- IN AX, AX
+			// -- IN EAX, AX
+
+			serial_write_string("EDX: 0x");
+			serial_write_dword(gp_sframe->edx);
+			serial_write_newline();
+
+			if (is_opcode32) {
+
+				// -- IN 32 bits
+
+			}
+			else {
+
+				// -- IN 16 bits
+
+				gp_sframe->eax0 = (gp_sframe->eax0 & 0xFFFF0000) + ioreadw(gp_sframe->edx & 0xFFFF);
+
+			}
+
+			serial_write_string("EAX: 0x");
+			serial_write_dword(gp_sframe->eax0);
+			serial_write_newline();
+
+			// -- Increment EIP
+
+			v86_sframe->eip++;
+
+			return INSTRUCTION_IN;
 			break;
 
 		default:

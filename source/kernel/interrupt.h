@@ -13,7 +13,9 @@ void register_software_interrupt(void(*interrupt_function)(void), size_t line);
 void enable_interrupts();
 void disable_interrupts();
 
-extern void raise_interrupt_0x80();
+extern void raise_interrupt_0x80(); // -- Interrupt software blocking
+extern void raise_interrupt_0x81(); // -- Interrupt enter VM86 mode
+extern void raise_interrupt_0x82(); // -- Interrupt exit VM86 mode
 
 void PIC_line_enable(size_t line);
 void PIC_line_disable(size_t line);

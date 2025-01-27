@@ -4,11 +4,16 @@
 
 start:
 
-	mov $0x0013, %ax
+	pop %eax
+	pop %ebx
+	pop %ecx
+	pop %edx
+	pop %esi
+	pop %edi
+	pop %fs
+	pop %gs
+	pop %es
+
 	int $0x10
-	mov $0x02, %cx
-
-v86_test_label:
-
-	jmp start
+	int $0x81
 	

@@ -84,6 +84,8 @@ void kernel_main() {
 
 	AHCI_read(0, ahci_read_buf, 0x83, 0, 1);
 
+	AHCI_write(0, (void*)0xC0000, 0x100, 0, 0x80);
+
 	disable_interrupts();
 	print_dword(*((uint32_t*)ahci_read_buf));
 	print_newline();
@@ -91,9 +93,8 @@ void kernel_main() {
 
 	memcpy((void*)0x30000, ahci_read_buf, 0x200);
 
-	PIC_line_disable(0x0);
-
 	virtual8086_init();
+	virtual8086();
 
 	while (true) {
 
