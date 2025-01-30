@@ -80,9 +80,9 @@ uint32_t virtual8086_monitor(void* stack_frame) {
 	serial_write_byte(*opcode_ptr);
 	serial_write_newline();
 
-	print_string("Instruction opcode: ");
-	print_byte(*opcode_ptr);
-	print_newline();
+	// print_string("Instruction opcode: ");
+	// print_byte(*opcode_ptr);
+	// print_newline();
 
 	IVT_ENTRY* ivt_ptr = (IVT_ENTRY*)0;
 	uint8_t* ring3_stack_u8 = (uint8_t*)((v86_sframe->ss << 4) + v86_sframe->esp); 

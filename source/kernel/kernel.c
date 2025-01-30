@@ -26,6 +26,7 @@
 #include "gdt.h"
 #include "virtual8086.h"
 #include "exception.h"
+#include "vesa_vbe.h"
 
 const size_t VGA_WIDTH = 0x50;
 const size_t VGA_HEIGHT = 0x19;
@@ -94,12 +95,13 @@ void kernel_main() {
 	memcpy((void*)0x30000, ahci_read_buf, 0x200);
 
 	virtual8086_init();
-	virtual8086();
+
+	vesa_vbe_init();
 
 	while (true) {
 
 		sleep(100);
-		*(g_VGABuffer + VGA_WIDTH + 0x4F) += 1;
+		// *(g_VGABuffer + VGA_WIDTH + 0x4F) += 1;
 
 	}
 

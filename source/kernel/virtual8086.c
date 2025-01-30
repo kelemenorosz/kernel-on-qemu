@@ -56,7 +56,6 @@ typedef struct __attribute__((__packed__)) TASK_STATE_SEGMENT {
 
 } TASK_STATE_SEGMENT;
 
-
 // Careful.
 // Any changes made to the size of V86_START_STACK has to be reflected in virtual8086.s:enter_virtual8086.
 // As enter_virtual8086 is an interrupt handler, passing arguments is not possible.
@@ -101,7 +100,7 @@ void virtual8086_init() {
 
 }
 
-void virtual8086() {
+void virtual8086(V86_DESC* desc) {
 
 	// -- Set up virtual8086 stack
 
@@ -110,7 +109,15 @@ void virtual8086() {
 
 	memset(v86_start_stack_frame, 0, sizeof(V86_START_STACK));
 
-	v86_start_stack_frame->eax = 0x0E21;
+	v86_start_stack_frame->eax = desc->eax;
+	v86_start_stack_frame->ebx = desc->ebx;
+	v86_start_stack_frame->ecx = desc->ecx;
+	v86_start_stack_frame->edx = desc->edx;
+	v86_start_stack_frame->esi = desc->esi;
+	v86_start_stack_frame->edi = desc->edi;
+	v86_start_stack_frame->fs = desc->fs;
+	v86_start_stack_frame->gs = desc->gs;
+	v86_start_stack_frame->es = desc->es;
 
 	// -- Call virtual8086
 	//
@@ -121,6 +128,18 @@ void virtual8086() {
 	raise_interrupt_0x81();
 	PIC_line_enable(0x0);
 
+	// -- Return v86 registers
+
+	desc->eax = v86_start_stack_frame->eax;
+	desc->ebx = v86_start_stack_frame->ebx;
+	desc->ecx = v86_start_stack_frame->ecx;
+	desc->edx = v86_start_stack_frame->edx;
+	desc->esi = v86_start_stack_frame->esi;
+	desc->edi = v86_start_stack_frame->edi;
+	desc->fs = v86_start_stack_frame->fs;
+	desc->gs = v86_start_stack_frame->gs;
+	desc->es = v86_start_stack_frame->es;
+	
 	return;
 
 }

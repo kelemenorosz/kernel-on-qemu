@@ -15,5 +15,16 @@ start:
 	pop %es
 
 	int $0x10
+
+	push %es
+	push %gs
+	push %es
+	push %edi	
+	push %esi	
+	push %edx	
+	push %ecx	
+	push %ebx	
+	push %eax	
+
 	int $0x81
 	
